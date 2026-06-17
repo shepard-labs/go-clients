@@ -178,9 +178,9 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 			time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
 			continue
 		}
-		defer resp.Body.Close()
 
 		respBody, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response: %w", err)
 			continue

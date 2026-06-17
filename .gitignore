@@ -1,3 +1,6 @@
 # Go build artifacts
 *.test
 *.out
+
+# Compiled example binary
+/examples/examples

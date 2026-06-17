@@ -82,6 +82,19 @@ func crc32c(data []byte) uint32 {
 	return crc32.Checksum(data, crc32.MakeTable(crc32.Castagnoli))
 }
 
+// sleepCtx waits for d or until ctx is cancelled, whichever comes first. It
+// reports false if the context was cancelled (so callers stop retrying).
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
 // EncryptCredentials encrypts plaintext credentials using KMS and returns
 // base64-encoded ciphertext.
 func (c *Client) EncryptCredentials(ctx context.Context, plaintext string) (string, error) {
@@ -111,7 +124,9 @@ func (c *Client) EncryptCredentials(ctx context.Context, plaintext string) (stri
 		c.logger.Warn("KMS encrypt attempt failed, retrying",
 			zap.Int("attempt", attempt+1),
 			zap.Error(err))
-		time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+		if !sleepCtx(ctx, time.Duration(attempt+1)*100*time.Millisecond) {
+			break
+		}
 	}
 
 	if err != nil {
@@ -122,7 +137,7 @@ func (c *Client) EncryptCredentials(ctx context.Context, plaintext string) (stri
 	if !result.VerifiedPlaintextCrc32C {
 		return "", fmt.Errorf("encrypt: request corrupted in-transit")
 	}
-	if int64(crc32c(result.Ciphertext)) != result.CiphertextCrc32C.Value {
+	if result.CiphertextCrc32C == nil || int64(crc32c(result.Ciphertext)) != result.CiphertextCrc32C.Value {
 		return "", fmt.Errorf("encrypt: response corrupted in-transit")
 	}
 
@@ -158,7 +173,9 @@ func (c *Client) DecryptCredentials(ctx context.Context, ciphertext string) (str
 		c.logger.Warn("KMS decrypt attempt failed, retrying",
 			zap.Int("attempt", attempt+1),
 			zap.Error(err))
-		time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+		if !sleepCtx(ctx, time.Duration(attempt+1)*100*time.Millisecond) {
+			break
+		}
 	}
 
 	if err != nil {
@@ -166,7 +183,7 @@ func (c *Client) DecryptCredentials(ctx context.Context, ciphertext string) (str
 		return "", fmt.Errorf("failed to decrypt credentials: %w", err)
 	}
 
-	if int64(crc32c(result.Plaintext)) != result.PlaintextCrc32C.Value {
+	if result.PlaintextCrc32C == nil || int64(crc32c(result.Plaintext)) != result.PlaintextCrc32C.Value {
 		return "", fmt.Errorf("decrypt: response corrupted in-transit")
 	}
 

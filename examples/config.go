@@ -4,7 +4,23 @@
 // It is intended as a reference for how to construct and use the clients in a
 // real service, including request authentication, body-size limits, request
 // timeouts, and error handling that never leaks provider internals or secrets
-// to callers. It is not meant to be deployed as-is.
+// to callers.
+//
+// SECURITY NOTES — this is a reference example, not a drop-in production
+// service. Before exposing anything like it:
+//
+//   - Terminate TLS in front of it. The bearer token travels in cleartext, so
+//     plain HTTP would expose it on the wire.
+//   - The single static API_KEY grants every capability to every caller. Use
+//     per-caller credentials with scoped authorization for real workloads, and
+//     a high-entropy key with rotation at minimum.
+//   - /kms/decrypt is a decryption oracle for the bound key: any authorized
+//     caller can decrypt any ciphertext the key produced. It exists here only
+//     to exercise the kms client. Do not expose a raw decrypt endpoint to
+//     untrusted callers; bind ciphertext to an authenticated context and
+//     authorize per resource instead.
+//   - /email/send accepts an arbitrary From; rely on provider-side sender
+//     verification (SES identities / Postmark domains) to prevent spoofing.
 package main
 
 import (
