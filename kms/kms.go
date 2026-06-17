@@ -63,7 +63,7 @@ func New(ctx context.Context, serviceAccount, keyName string, logger *zap.Logger
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode service account JSON: %w", err)
 		}
-		opts = append(opts, option.WithCredentialsJSON(serviceAccountJSON))
+		opts = append(opts, option.WithAuthCredentialsJSON(option.ServiceAccount, serviceAccountJSON))
 	}
 
 	client, err := kmsapi.NewKeyManagementClient(ctx, opts...)
