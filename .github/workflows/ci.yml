@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [email, storage, kms, examples]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: true
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Run race tests
+        run: go test -race ./...
+
+      - name: Run go vet
+        run: go vet ./...
+
+  staticcheck:
+    name: Staticcheck (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [email, storage, kms, examples]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: true
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: Run staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: latest
+          working-directory: ${{ matrix.module }}
+          install-go: false
+
+  govulncheck:
+    name: Govulncheck (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [email, storage, kms, examples]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    env:
+      GOPRIVATE: github.com/shepard-labs/*
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache: true
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        continue-on-error: true
+        run: govulncheck ./...
+
+  release:
+    name: Release (${{ matrix.module }})
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs: [test, staticcheck]
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # examples is a runnable demo, not a published library, so it is not tagged.
+        module: [email, storage, kms]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: true
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: Determine version
+        id: version
+        env:
+          MODULE: ${{ matrix.module }}
+        run: |
+          # Per-module tags are namespaced as "<module>/vX.Y.Z" so Go consumers
+          # can `go get github.com/shepard-labs/go-clients/<module>@vX.Y.Z`.
+          PREFIX="${MODULE}/"
+          LATEST_TAG=$(git tag | grep -E "^${PREFIX}v[0-9]+\.[0-9]+\.[0-9]+$" | sed "s#^${PREFIX}##" | sort -V | tail -1 || true)
+          if [ -z "$LATEST_TAG" ]; then
+            VERSION="v1.0.0"
+          else
+            MAJOR=$(echo "$LATEST_TAG" | cut -d. -f1 | tr -d 'v')
+            MINOR=$(echo "$LATEST_TAG" | cut -d. -f2)
+            PATCH=$(echo "$LATEST_TAG" | cut -d. -f3)
+            PATCH=$((PATCH + 1))
+            VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+          echo "tag=${PREFIX}${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
