@@ -14,6 +14,7 @@ import (
 
 	kmsapi "cloud.google.com/go/kms/apiv1"
 	"cloud.google.com/go/kms/apiv1/kmspb"
+	"github.com/googleapis/gax-go/v2"
 	"go.uber.org/zap"
 	"google.golang.org/api/option"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -25,6 +26,10 @@ const maxPlaintextBytes = 64 * 1024
 
 // ErrPlaintextTooLarge indicates the plaintext exceeds the KMS per-call limit.
 var ErrPlaintextTooLarge = errors.New("plaintext exceeds maximum size")
+
+var newKMSClient = func(ctx context.Context, opts ...option.ClientOption) (kmsClient, error) {
+	return kmsapi.NewKeyManagementClient(ctx, opts...)
+}
 
 // Encryptor encrypts and decrypts short credential strings using a bound KMS
 // key. Implementations are safe for concurrent use.
@@ -41,9 +46,15 @@ type Encryptor interface {
 
 // Client implements Encryptor backed by Google Cloud KMS.
 type Client struct {
-	client  *kmsapi.KeyManagementClient
+	client  kmsClient
 	keyName string
 	logger  *zap.Logger
+}
+
+type kmsClient interface {
+	Encrypt(context.Context, *kmspb.EncryptRequest, ...gax.CallOption) (*kmspb.EncryptResponse, error)
+	Decrypt(context.Context, *kmspb.DecryptRequest, ...gax.CallOption) (*kmspb.DecryptResponse, error)
+	Close() error
 }
 
 // Ensure *Client satisfies the Encryptor interface.
@@ -66,7 +77,7 @@ func New(ctx context.Context, serviceAccount, keyName string, logger *zap.Logger
 		opts = append(opts, option.WithAuthCredentialsJSON(option.ServiceAccount, serviceAccountJSON))
 	}
 
-	client, err := kmsapi.NewKeyManagementClient(ctx, opts...)
+	client, err := newKMSClient(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create KMS client: %w", err)
 	}

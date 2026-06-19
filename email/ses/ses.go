@@ -37,10 +37,20 @@ type Credentials struct {
 // credentials are used to construct an SES client per call, reusing a shared
 // HTTP client for connection pooling.
 type Client struct {
-	httpClient *http.Client
-	logger     *zap.Logger
-	creds      Credentials
-	serviceTag string
+	httpClient  *http.Client
+	logger      *zap.Logger
+	creds       Credentials
+	serviceTag  string
+	buildClient func() sesClient
+}
+
+type sesClient interface {
+	SendEmail(context.Context, *awsses.SendEmailInput, ...func(*awsses.Options)) (*awsses.SendEmailOutput, error)
+	CreateEmailIdentity(context.Context, *awsses.CreateEmailIdentityInput, ...func(*awsses.Options)) (*awsses.CreateEmailIdentityOutput, error)
+	GetEmailIdentity(context.Context, *awsses.GetEmailIdentityInput, ...func(*awsses.Options)) (*awsses.GetEmailIdentityOutput, error)
+	DeleteEmailIdentity(context.Context, *awsses.DeleteEmailIdentityInput, ...func(*awsses.Options)) (*awsses.DeleteEmailIdentityOutput, error)
+	PutEmailIdentityDkimAttributes(context.Context, *awsses.PutEmailIdentityDkimAttributesInput, ...func(*awsses.Options)) (*awsses.PutEmailIdentityDkimAttributesOutput, error)
+	GetAccount(context.Context, *awsses.GetAccountInput, ...func(*awsses.Options)) (*awsses.GetAccountOutput, error)
 }
 
 // New constructs an SES-backed email.Sender bound to creds.
@@ -134,6 +144,13 @@ func (c *Client) buildAWSClient() *awsses.Client {
 	return awsses.NewFromConfig(cfg)
 }
 
+func (c *Client) sesClient() sesClient {
+	if c.buildClient != nil {
+		return c.buildClient()
+	}
+	return c.buildAWSClient()
+}
+
 // wrapSESError converts an AWS SDK error into a typed *SESError when possible.
 func wrapSESError(err error) error {
 	var apiErr smithy.APIError
@@ -180,7 +197,7 @@ func (c *Client) Send(ctx context.Context, msg *email.Message) (*email.SendResul
 		return nil, err
 	}
 
-	client := c.buildAWSClient()
+	client := c.sesClient()
 
 	input := &awsses.SendEmailInput{
 		FromEmailAddress: aws.String(msg.From),
@@ -248,7 +265,7 @@ func (c *Client) VerifyAuth(ctx context.Context) error {
 // CreateEmailIdentity creates and begins verification of an email identity
 // (address or domain).
 func (c *Client) CreateEmailIdentity(ctx context.Context, identity string) (*IdentityInfo, error) {
-	client := c.buildAWSClient()
+	client := c.sesClient()
 
 	output, err := client.CreateEmailIdentity(ctx, &awsses.CreateEmailIdentityInput{
 		EmailIdentity: aws.String(identity),
@@ -262,7 +279,7 @@ func (c *Client) CreateEmailIdentity(ctx context.Context, identity string) (*Ide
 
 // GetEmailIdentity retrieves verification and DKIM information for an identity.
 func (c *Client) GetEmailIdentity(ctx context.Context, identity string) (*IdentityInfo, error) {
-	client := c.buildAWSClient()
+	client := c.sesClient()
 
 	output, err := client.GetEmailIdentity(ctx, &awsses.GetEmailIdentityInput{
 		EmailIdentity: aws.String(identity),
@@ -276,7 +293,7 @@ func (c *Client) GetEmailIdentity(ctx context.Context, identity string) (*Identi
 
 // DeleteEmailIdentity removes an email identity from SES.
 func (c *Client) DeleteEmailIdentity(ctx context.Context, identity string) error {
-	client := c.buildAWSClient()
+	client := c.sesClient()
 
 	_, err := client.DeleteEmailIdentity(ctx, &awsses.DeleteEmailIdentityInput{
 		EmailIdentity: aws.String(identity),
@@ -286,7 +303,7 @@ func (c *Client) DeleteEmailIdentity(ctx context.Context, identity string) error
 
 // PutEmailIdentityDkimAttributes enables or disables DKIM signing for an identity.
 func (c *Client) PutEmailIdentityDkimAttributes(ctx context.Context, identity string, signingEnabled bool) error {
-	client := c.buildAWSClient()
+	client := c.sesClient()
 
 	_, err := client.PutEmailIdentityDkimAttributes(ctx, &awsses.PutEmailIdentityDkimAttributesInput{
 		EmailIdentity:  aws.String(identity),
@@ -297,7 +314,7 @@ func (c *Client) PutEmailIdentityDkimAttributes(ctx context.Context, identity st
 
 // GetAccount retrieves sending quota and status for the SES account.
 func (c *Client) GetAccount(ctx context.Context) (*AccountInfo, error) {
-	client := c.buildAWSClient()
+	client := c.sesClient()
 
 	output, err := client.GetAccount(ctx, &awsses.GetAccountInput{})
 	if err != nil {

@@ -20,15 +20,69 @@ import (
 // Ensure *Client satisfies the shared interface.
 var _ clientstorage.Storage = (*Client)(nil)
 
+var newStorageClient = func(ctx context.Context, opts ...option.ClientOption) (gcsClient, error) {
+	client, err := storage.NewClient(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return storageClientAdapter{client: client}, nil
+}
+
 // Client implements storage.Storage backed by Google Cloud Storage, bound to
 // a single bucket.
 type Client struct {
-	client      *storage.Client
+	client      gcsClient
 	logger      *zap.Logger
 	bucket      string
 	serviceTag  string
 	maxDownload int64
 }
+
+type gcsClient interface {
+	Bucket(string) gcsBucket
+	Close() error
+}
+
+type gcsBucket interface {
+	Object(string) gcsObject
+}
+
+type gcsObject interface {
+	NewWriter(context.Context) gcsWriter
+	NewReader(context.Context) (io.ReadCloser, error)
+	Delete(context.Context) error
+}
+
+type gcsWriter interface {
+	io.Writer
+	Close() error
+	setContentType(string)
+	setMetadata(map[string]string)
+}
+
+type storageClientAdapter struct{ client *storage.Client }
+type storageBucketAdapter struct{ bucket *storage.BucketHandle }
+type storageObjectAdapter struct{ object *storage.ObjectHandle }
+type storageWriterAdapter struct{ writer *storage.Writer }
+
+func (a storageClientAdapter) Bucket(name string) gcsBucket {
+	return storageBucketAdapter{bucket: a.client.Bucket(name)}
+}
+func (a storageClientAdapter) Close() error { return a.client.Close() }
+func (a storageBucketAdapter) Object(name string) gcsObject {
+	return storageObjectAdapter{object: a.bucket.Object(name)}
+}
+func (a storageObjectAdapter) NewWriter(ctx context.Context) gcsWriter {
+	return storageWriterAdapter{writer: a.object.NewWriter(ctx)}
+}
+func (a storageObjectAdapter) NewReader(ctx context.Context) (io.ReadCloser, error) {
+	return a.object.NewReader(ctx)
+}
+func (a storageObjectAdapter) Delete(ctx context.Context) error       { return a.object.Delete(ctx) }
+func (a storageWriterAdapter) Write(p []byte) (int, error)            { return a.writer.Write(p) }
+func (a storageWriterAdapter) Close() error                           { return a.writer.Close() }
+func (a storageWriterAdapter) setContentType(contentType string)      { a.writer.ContentType = contentType }
+func (a storageWriterAdapter) setMetadata(metadata map[string]string) { a.writer.Metadata = metadata }
 
 // New constructs a GCS-backed storage.Storage bound to bucket.
 //
@@ -48,7 +102,7 @@ func New(ctx context.Context, serviceAccount, bucket, serviceTag string, maxDown
 		opts = append(opts, option.WithAuthCredentialsJSON(option.ServiceAccount, serviceAccountJSON))
 	}
 
-	client, err := storage.NewClient(ctx, opts...)
+	client, err := newStorageClient(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage client: %w", err)
 	}
@@ -90,8 +144,8 @@ func (c *Client) Upload(ctx context.Context, objectName string, content []byte, 
 
 	obj := c.client.Bucket(c.bucket).Object(objectName)
 	writer := obj.NewWriter(ctx)
-	writer.ContentType = contentType
-	writer.Metadata = c.metadata()
+	writer.setContentType(contentType)
+	writer.setMetadata(c.metadata())
 
 	if _, err := writer.Write(content); err != nil {
 		writer.Close()
@@ -123,8 +177,8 @@ func (c *Client) UploadReader(ctx context.Context, objectName string, r io.Reade
 
 	obj := c.client.Bucket(c.bucket).Object(objectName)
 	writer := obj.NewWriter(ctx)
-	writer.ContentType = contentType
-	writer.Metadata = c.metadata()
+	writer.setContentType(contentType)
+	writer.setMetadata(c.metadata())
 
 	if _, err := io.Copy(writer, r); err != nil {
 		writer.Close()

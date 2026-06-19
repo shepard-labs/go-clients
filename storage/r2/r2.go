@@ -26,12 +26,32 @@ var _ clientstorage.Storage = (*Client)(nil)
 // Client implements storage.Storage backed by Cloudflare R2, bound to a single
 // bucket.
 type Client struct {
-	client      *minio.Client
+	client      r2Client
 	logger      *zap.Logger
 	bucket      string
 	endpoint    string
 	serviceTag  string
 	maxDownload int64
+}
+
+type r2Client interface {
+	PutObject(context.Context, string, string, io.Reader, int64, minio.PutObjectOptions) (minio.UploadInfo, error)
+	GetObject(context.Context, string, string, minio.GetObjectOptions) (io.ReadCloser, error)
+	RemoveObject(context.Context, string, string, minio.RemoveObjectOptions) error
+}
+
+type minioAdapter struct{ client *minio.Client }
+
+func (a minioAdapter) PutObject(ctx context.Context, bucket, objectName string, r io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+	return a.client.PutObject(ctx, bucket, objectName, r, size, opts)
+}
+
+func (a minioAdapter) GetObject(ctx context.Context, bucket, objectName string, opts minio.GetObjectOptions) (io.ReadCloser, error) {
+	return a.client.GetObject(ctx, bucket, objectName, opts)
+}
+
+func (a minioAdapter) RemoveObject(ctx context.Context, bucket, objectName string, opts minio.RemoveObjectOptions) error {
+	return a.client.RemoveObject(ctx, bucket, objectName, opts)
 }
 
 // New constructs an R2-backed storage.Storage bound to bucket.
@@ -69,7 +89,7 @@ func New(accountID, accessKeyID, secretKey, bucket, serviceTag string, maxDownlo
 	}
 
 	return &Client{
-		client:      minioClient,
+		client:      minioAdapter{client: minioClient},
 		logger:      logger,
 		bucket:      bucket,
 		endpoint:    endpoint,
