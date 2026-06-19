@@ -161,6 +161,9 @@ func (c *Client) Download(ctx context.Context, objectName string) ([]byte, error
 
 	obj, err := c.client.GetObject(ctx, c.bucket, objectName, minio.GetObjectOptions{})
 	if err != nil {
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return nil, fmt.Errorf("%w: %s", clientstorage.ErrObjectNotFound, objectName)
+		}
 		c.logger.Warn("failed to get object from R2", zap.Error(err), zap.String("object", objectName))
 		return nil, fmt.Errorf("r2 get object failed: %w", err)
 	}
@@ -170,6 +173,9 @@ func (c *Client) Download(ctx context.Context, objectName string) ([]byte, error
 	// than silently truncated.
 	data, err := io.ReadAll(io.LimitReader(obj, c.maxDownload+1))
 	if err != nil {
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return nil, fmt.Errorf("%w: %s", clientstorage.ErrObjectNotFound, objectName)
+		}
 		c.logger.Error("failed to read object from R2", zap.Error(err), zap.String("object", objectName))
 		return nil, fmt.Errorf("r2 read object failed: %w", err)
 	}

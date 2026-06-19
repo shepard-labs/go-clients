@@ -32,6 +32,9 @@ var (
 	// ErrObjectTooLarge indicates a downloaded object exceeded the configured
 	// size limit.
 	ErrObjectTooLarge = errors.New("object exceeds maximum download size")
+
+	// ErrObjectNotFound indicates the requested object does not exist.
+	ErrObjectNotFound = errors.New("object not found")
 )
 
 // ValidateObjectName rejects names that are empty, absolute, or contain a ".."

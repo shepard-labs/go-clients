@@ -5,6 +5,7 @@ package gcs
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -155,6 +156,9 @@ func (c *Client) Download(ctx context.Context, objectName string) ([]byte, error
 	obj := c.client.Bucket(c.bucket).Object(objectName)
 	reader, err := obj.NewReader(ctx)
 	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return nil, fmt.Errorf("%w: %s", clientstorage.ErrObjectNotFound, objectName)
+		}
 		c.logger.Warn("failed to create reader", zap.Error(err), zap.String("object", objectName))
 		return nil, fmt.Errorf("failed to open object: %w", err)
 	}
@@ -184,6 +188,9 @@ func (c *Client) Delete(ctx context.Context, objectName string) error {
 
 	obj := c.client.Bucket(c.bucket).Object(objectName)
 	if err := obj.Delete(ctx); err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return fmt.Errorf("%w: %s", clientstorage.ErrObjectNotFound, objectName)
+		}
 		c.logger.Error("failed to delete document", zap.Error(err))
 		return fmt.Errorf("failed to delete document: %w", err)
 	}

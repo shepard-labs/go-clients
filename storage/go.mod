@@ -1,6 +1,6 @@
 module github.com/shepard-labs/go-clients/storage
 
-go 1.25
+go 1.25.8
 
 require (
 	cloud.google.com/go/storage v1.62.3
