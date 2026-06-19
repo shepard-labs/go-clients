@@ -1,5 +1,9 @@
 # go-clients
 
+[![CI](https://github.com/shepard-labs/go-clients/actions/workflows/ci.yml/badge.svg)](https://github.com/shepard-labs/go-clients/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/shepard-labs/go-clients)](https://goreportcard.com/report/github.com/shepard-labs/go-clients)
+[![Go Reference](https://pkg.go.dev/badge/github.com/shepard-labs/go-clients.svg)](https://pkg.go.dev/github.com/shepard-labs/go-clients)
+
 Reusable Go clients for cloud services, extracted as independent modules so a
 backend can import only what it needs.
 
