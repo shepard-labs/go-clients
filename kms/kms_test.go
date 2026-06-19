@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/googleapis/gax-go/v2"
@@ -147,7 +148,7 @@ func TestDecryptErrors(t *testing.T) {
 func TestSleepCtxCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if sleepCtx(ctx, 0) {
+	if sleepCtx(ctx, time.Hour) {
 		t.Fatal("expected sleepCtx to report cancellation")
 	}
 }
