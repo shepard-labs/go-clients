@@ -122,6 +122,29 @@ func TestSendSetsServerTokenHeader(t *testing.T) {
 	}
 }
 
+func TestSendForwardsMessageStream(t *testing.T) {
+	var body struct {
+		MessageStream string `json:"MessageStream"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(SendEmailResponse{MessageID: "x"})
+	}))
+	defer srv.Close()
+
+	msg := validMsg()
+	msg.MessageStream = "broadcast"
+
+	c := newTestClient(srv.URL)
+	if _, err := c.Send(context.Background(), msg); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if body.MessageStream != "broadcast" {
+		t.Fatalf("expected MessageStream %q, got %q", "broadcast", body.MessageStream)
+	}
+}
+
 func TestPostmarkResourceMethods(t *testing.T) {
 	paths := make([]string, 0, 4)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

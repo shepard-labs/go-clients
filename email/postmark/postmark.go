@@ -217,15 +217,16 @@ func (c *Client) Send(ctx context.Context, msg *email.Message) (*email.SendResul
 	}
 
 	pm := postmarkEmail{
-		From:       msg.From,
-		To:         strings.Join(msg.To, ","),
-		Cc:         strings.Join(msg.Cc, ","),
-		Bcc:        strings.Join(msg.Bcc, ","),
-		ReplyTo:    strings.Join(msg.ReplyTo, ","),
-		Subject:    msg.Subject,
-		HtmlBody:   msg.HTMLBody,
-		TextBody:   msg.TextBody,
-		TrackOpens: true,
+		From:          msg.From,
+		To:            strings.Join(msg.To, ","),
+		Cc:            strings.Join(msg.Cc, ","),
+		Bcc:           strings.Join(msg.Bcc, ","),
+		ReplyTo:       strings.Join(msg.ReplyTo, ","),
+		Subject:       msg.Subject,
+		HtmlBody:      msg.HTMLBody,
+		TextBody:      msg.TextBody,
+		TrackOpens:    true,
+		MessageStream: msg.MessageStream,
 	}
 	if len(msg.Tags) > 0 {
 		pm.Tag = msg.Tags[0].Name

@@ -51,6 +51,10 @@ type Message struct {
 	TextBody string
 	Tags     []Tag
 	Headers  []Header
+
+	// MessageStream selects the Postmark message stream the email is sent on.
+	// It is Postmark-specific; providers that lack the concept ignore it.
+	MessageStream string
 }
 
 // SendResult is the provider-agnostic outcome of a successful send.
