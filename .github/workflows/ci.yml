@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [email, storage, kms, examples]
+        module: [email, storage, kms, twitter, examples]
     defaults:
       run:
         working-directory: ${{ matrix.module }}
@@ -49,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [email, storage, kms, examples]
+        module: [email, storage, kms, twitter, examples]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -74,7 +74,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [email, storage, kms, examples]
+        module: [email, storage, kms, twitter, examples]
     defaults:
       run:
         working-directory: ${{ matrix.module }}
@@ -109,7 +109,7 @@ jobs:
       fail-fast: false
       matrix:
         # examples is a runnable demo, not a published library, so it is not tagged.
-        module: [email, storage, kms]
+        module: [email, storage, kms, twitter]
     steps:
       - uses: actions/checkout@v6
         with:
