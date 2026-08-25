@@ -7,9 +7,11 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"go.uber.org/zap"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 
 	clientstorage "github.com/shepard-labs/go-clients/storage"
@@ -23,11 +25,40 @@ type fakeGCSClient struct {
 func (f *fakeGCSClient) Bucket(string) gcsBucket { return f.bucket }
 func (f *fakeGCSClient) Close() error            { return f.closeErr }
 
-type fakeGCSBucket struct{ object *fakeGCSObject }
+type fakeGCSBucket struct {
+	object     *fakeGCSObject
+	list       *fakeGCSIterator
+	listPrefix string
+}
 
 func (f *fakeGCSBucket) Object(name string) gcsObject {
 	f.object.name = name
 	return f.object
+}
+
+func (f *fakeGCSBucket) Objects(_ context.Context, q *storage.Query) gcsObjectIterator {
+	f.listPrefix = q.Prefix
+	if f.list == nil {
+		f.list = &fakeGCSIterator{}
+	}
+	return f.list
+}
+
+type fakeGCSIterator struct {
+	attrs []*storage.ObjectAttrs
+	err   error
+	idx   int
+}
+
+func (f *fakeGCSIterator) Next() (*storage.ObjectAttrs, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.idx >= len(f.attrs) {
+		return nil, iterator.Done
+	}
+	f.idx++
+	return f.attrs[f.idx-1], nil
 }
 
 type fakeGCSObject struct {
@@ -125,6 +156,46 @@ func TestDownloadDeleteAndClose(t *testing.T) {
 	}
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close failed: %v", err)
+	}
+}
+
+func TestList(t *testing.T) {
+	updated := time.Now()
+	bucket := &fakeGCSBucket{
+		object: &fakeGCSObject{},
+		list: &fakeGCSIterator{attrs: []*storage.ObjectAttrs{
+			{Name: "pre/a", Size: 1, ContentType: "text/plain", Updated: updated},
+			{Name: "pre/b", Size: 2},
+		}},
+	}
+	c := &Client{client: &fakeGCSClient{bucket: bucket}, logger: zap.NewNop(), bucket: "bucket"}
+
+	objects, err := c.List(context.Background(), "pre")
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if bucket.listPrefix != "pre" {
+		t.Fatalf("prefix not passed through: %q", bucket.listPrefix)
+	}
+	if len(objects) != 2 {
+		t.Fatalf("unexpected object count: %d", len(objects))
+	}
+	if objects[0].Name != "pre/a" || objects[0].Size != 1 || objects[0].ContentType != "text/plain" || !objects[0].Updated.Equal(updated) {
+		t.Fatalf("unexpected object info: %#v", objects[0])
+	}
+}
+
+func TestListErrors(t *testing.T) {
+	bucket := &fakeGCSBucket{object: &fakeGCSObject{}}
+	c := &Client{client: &fakeGCSClient{bucket: bucket}, logger: zap.NewNop(), bucket: "bucket"}
+
+	if _, err := c.List(context.Background(), "../bad"); err == nil {
+		t.Fatal("expected prefix validation error")
+	}
+
+	bucket.list = &fakeGCSIterator{err: errors.New("iterate")}
+	if _, err := c.List(context.Background(), ""); err == nil {
+		t.Fatal("expected iterator error")
 	}
 }
 

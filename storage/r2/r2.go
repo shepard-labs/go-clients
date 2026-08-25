@@ -37,6 +37,7 @@ type Client struct {
 type r2Client interface {
 	PutObject(context.Context, string, string, io.Reader, int64, minio.PutObjectOptions) (minio.UploadInfo, error)
 	GetObject(context.Context, string, string, minio.GetObjectOptions) (io.ReadCloser, error)
+	ListObjects(context.Context, string, minio.ListObjectsOptions) <-chan minio.ObjectInfo
 	RemoveObject(context.Context, string, string, minio.RemoveObjectOptions) error
 }
 
@@ -52,6 +53,10 @@ func (a minioAdapter) GetObject(ctx context.Context, bucket, objectName string, 
 
 func (a minioAdapter) RemoveObject(ctx context.Context, bucket, objectName string, opts minio.RemoveObjectOptions) error {
 	return a.client.RemoveObject(ctx, bucket, objectName, opts)
+}
+
+func (a minioAdapter) ListObjects(ctx context.Context, bucket string, opts minio.ListObjectsOptions) <-chan minio.ObjectInfo {
+	return a.client.ListObjects(ctx, bucket, opts)
 }
 
 // New constructs an R2-backed storage.Storage bound to bucket.
@@ -203,6 +208,41 @@ func (c *Client) Download(ctx context.Context, objectName string) ([]byte, error
 		return nil, fmt.Errorf("%w: %s", clientstorage.ErrObjectTooLarge, objectName)
 	}
 	return data, nil
+}
+
+// List returns objects whose names begin with prefix. An empty prefix lists
+// the whole bucket. It implements storage.Storage.
+func (c *Client) List(ctx context.Context, prefix string) ([]clientstorage.ObjectInfo, error) {
+	if prefix != "" {
+		if err := clientstorage.ValidateObjectName(prefix); err != nil {
+			return nil, err
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
+	defer cancel()
+
+	c.logger.Info("listing objects in R2",
+		zap.String("bucket", c.bucket),
+		zap.String("prefix", prefix),
+	)
+
+	var objects []clientstorage.ObjectInfo
+	for obj := range c.client.ListObjects(ctx, c.bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
+		if obj.Err != nil {
+			c.logger.Error("failed to list objects in R2", zap.Error(obj.Err), zap.String("prefix", prefix))
+			return nil, fmt.Errorf("r2 list objects failed: %w", obj.Err)
+		}
+		objects = append(objects, clientstorage.ObjectInfo{
+			Name:        obj.Key,
+			Size:        obj.Size,
+			ContentType: obj.ContentType,
+			Updated:     obj.LastModified,
+		})
+	}
+
+	c.logger.Info("objects listed successfully", zap.String("bucket", c.bucket), zap.String("prefix", prefix), zap.Int("count", len(objects)))
+	return objects, nil
 }
 
 // Delete removes objectName. It implements storage.Storage.

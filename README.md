@@ -67,6 +67,7 @@ s, err = r2.New(accountID, accessKey, secret, "my-bucket", "my-service", logger)
 err = s.Upload(ctx, "path/to/object", content, "application/pdf")
 err = s.UploadReader(ctx, "path/to/object", reader, "application/pdf", size)
 data, err := s.Download(ctx, "path/to/object")
+objects, err := s.List(ctx, "path/to/") // empty prefix lists the whole bucket
 err = s.Delete(ctx, "path/to/object")
 err = s.Close()
 ```

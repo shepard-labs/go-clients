@@ -12,6 +12,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"go.uber.org/zap"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 
 	clientstorage "github.com/shepard-labs/go-clients/storage"
@@ -45,6 +46,11 @@ type gcsClient interface {
 
 type gcsBucket interface {
 	Object(string) gcsObject
+	Objects(context.Context, *storage.Query) gcsObjectIterator
+}
+
+type gcsObjectIterator interface {
+	Next() (*storage.ObjectAttrs, error)
 }
 
 type gcsObject interface {
@@ -64,6 +70,7 @@ type storageClientAdapter struct{ client *storage.Client }
 type storageBucketAdapter struct{ bucket *storage.BucketHandle }
 type storageObjectAdapter struct{ object *storage.ObjectHandle }
 type storageWriterAdapter struct{ writer *storage.Writer }
+type storageIteratorAdapter struct{ it *storage.ObjectIterator }
 
 func (a storageClientAdapter) Bucket(name string) gcsBucket {
 	return storageBucketAdapter{bucket: a.client.Bucket(name)}
@@ -72,6 +79,10 @@ func (a storageClientAdapter) Close() error { return a.client.Close() }
 func (a storageBucketAdapter) Object(name string) gcsObject {
 	return storageObjectAdapter{object: a.bucket.Object(name)}
 }
+func (a storageBucketAdapter) Objects(ctx context.Context, q *storage.Query) gcsObjectIterator {
+	return storageIteratorAdapter{it: a.bucket.Objects(ctx, q)}
+}
+func (a storageIteratorAdapter) Next() (*storage.ObjectAttrs, error) { return a.it.Next() }
 func (a storageObjectAdapter) NewWriter(ctx context.Context) gcsWriter {
 	return storageWriterAdapter{writer: a.object.NewWriter(ctx)}
 }
@@ -230,6 +241,43 @@ func (c *Client) Download(ctx context.Context, objectName string) ([]byte, error
 	}
 
 	return content, nil
+}
+
+// List returns objects whose names begin with prefix. An empty prefix lists
+// the whole bucket. It implements storage.Storage.
+func (c *Client) List(ctx context.Context, prefix string) ([]clientstorage.ObjectInfo, error) {
+	if prefix != "" {
+		if err := clientstorage.ValidateObjectName(prefix); err != nil {
+			return nil, err
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	c.logger.Info("listing objects in GCS", zap.String("bucket", c.bucket), zap.String("prefix", prefix))
+
+	it := c.client.Bucket(c.bucket).Objects(ctx, &storage.Query{Prefix: prefix})
+	var objects []clientstorage.ObjectInfo
+	for {
+		attrs, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			c.logger.Error("failed to list objects", zap.Error(err), zap.String("prefix", prefix))
+			return nil, fmt.Errorf("failed to list objects: %w", err)
+		}
+		objects = append(objects, clientstorage.ObjectInfo{
+			Name:        attrs.Name,
+			Size:        attrs.Size,
+			ContentType: attrs.ContentType,
+			Updated:     attrs.Updated,
+		})
+	}
+
+	c.logger.Info("objects listed successfully", zap.String("bucket", c.bucket), zap.String("prefix", prefix), zap.Int("count", len(objects)))
+	return objects, nil
 }
 
 // Delete removes objectName. It implements storage.Storage.

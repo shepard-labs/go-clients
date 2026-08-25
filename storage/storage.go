@@ -4,7 +4,7 @@
 // Each implementation binds its destination bucket and credentials at
 // construction time. The Storage interface covers the operations common to
 // all providers: uploading bytes, streaming uploads from a reader,
-// downloading, and deleting objects by name.
+// downloading, listing, and deleting objects by name.
 //
 // Application-specific path conventions (e.g. building object names from
 // business identifiers) are intentionally out of scope; build those on top of
@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
 
 // DefaultMaxDownloadBytes caps the size of an object that Download will buffer
@@ -56,6 +57,14 @@ func ValidateObjectName(name string) error {
 	return nil
 }
 
+// ObjectInfo describes a single object returned by List.
+type ObjectInfo struct {
+	Name        string
+	Size        int64
+	ContentType string
+	Updated     time.Time
+}
+
 // Storage is a provider-agnostic object store bound to a single bucket.
 //
 // Implementations are safe for concurrent use. Object names are
@@ -70,6 +79,10 @@ type Storage interface {
 
 	// Download returns the full contents of objectName.
 	Download(ctx context.Context, objectName string) ([]byte, error)
+
+	// List returns objects whose names begin with prefix. An empty prefix
+	// lists the whole bucket. Results are unordered.
+	List(ctx context.Context, prefix string) ([]ObjectInfo, error)
 
 	// Delete removes objectName.
 	Delete(ctx context.Context, objectName string) error

@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"go.uber.org/zap"
@@ -24,6 +25,9 @@ type fakeR2Client struct {
 	getReader io.ReadCloser
 	getErr    error
 	removeErr error
+
+	listObjects []minio.ObjectInfo
+	listPrefix  string
 }
 
 func (f *fakeR2Client) PutObject(_ context.Context, bucket, objectName string, r io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
@@ -56,6 +60,16 @@ func (f failingReadCloser) Close() error             { return nil }
 
 func (f *fakeR2Client) RemoveObject(context.Context, string, string, minio.RemoveObjectOptions) error {
 	return f.removeErr
+}
+
+func (f *fakeR2Client) ListObjects(_ context.Context, _ string, opts minio.ListObjectsOptions) <-chan minio.ObjectInfo {
+	f.listPrefix = opts.Prefix
+	ch := make(chan minio.ObjectInfo, len(f.listObjects))
+	for _, obj := range f.listObjects {
+		ch <- obj
+	}
+	close(ch)
+	return ch
 }
 
 func testClient(fake *fakeR2Client, maxDownload int64) *Client {
@@ -125,6 +139,41 @@ func TestDownloadErrors(t *testing.T) {
 	c = testClient(&fakeR2Client{getReader: failingReadCloser{err: errors.New("read")}}, 10)
 	if _, err := c.Download(context.Background(), "object"); err == nil {
 		t.Fatal("expected read error")
+	}
+}
+
+func TestList(t *testing.T) {
+	updated := time.Now()
+	fake := &fakeR2Client{listObjects: []minio.ObjectInfo{
+		{Key: "pre/a", Size: 1, ContentType: "text/plain", LastModified: updated},
+		{Key: "pre/b", Size: 2},
+	}}
+	c := testClient(fake, 10)
+
+	objects, err := c.List(context.Background(), "pre")
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if fake.listPrefix != "pre" {
+		t.Fatalf("prefix not passed through: %q", fake.listPrefix)
+	}
+	if len(objects) != 2 {
+		t.Fatalf("unexpected object count: %d", len(objects))
+	}
+	if objects[0].Name != "pre/a" || objects[0].Size != 1 || objects[0].ContentType != "text/plain" || !objects[0].Updated.Equal(updated) {
+		t.Fatalf("unexpected object info: %#v", objects[0])
+	}
+}
+
+func TestListErrors(t *testing.T) {
+	c := testClient(&fakeR2Client{}, 10)
+	if _, err := c.List(context.Background(), "../bad"); err == nil {
+		t.Fatal("expected prefix validation error")
+	}
+
+	c = testClient(&fakeR2Client{listObjects: []minio.ObjectInfo{{Err: errors.New("list")}}}, 10)
+	if _, err := c.List(context.Background(), ""); err == nil {
+		t.Fatal("expected list error")
 	}
 }
 
