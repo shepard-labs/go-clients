@@ -101,49 +101,14 @@ jobs:
   release:
     name: Release (${{ matrix.module }})
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
     needs: [test, staticcheck]
     permissions:
       contents: write
+      models: read
     strategy:
       fail-fast: false
       matrix:
-        # examples is a runnable demo, not a published library, so it is not tagged.
         module: [email, storage, kms, twitter]
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version: '1.26.x'
-          cache: true
-          cache-dependency-path: ${{ matrix.module }}/go.sum
-
-      - name: Determine version
-        id: version
-        env:
-          MODULE: ${{ matrix.module }}
-        run: |
-          # Per-module tags are namespaced as "<module>/vX.Y.Z" so Go consumers
-          # can `go get github.com/shepard-labs/go-clients/<module>@vX.Y.Z`.
-          PREFIX="${MODULE}/"
-          LATEST_TAG=$(git tag | grep -E "^${PREFIX}v[0-9]+\.[0-9]+\.[0-9]+$" | sed "s#^${PREFIX}##" | sort -V | tail -1 || true)
-          if [ -z "$LATEST_TAG" ]; then
-            VERSION="v1.0.0"
-          else
-            MAJOR=$(echo "$LATEST_TAG" | cut -d. -f1 | tr -d 'v')
-            MINOR=$(echo "$LATEST_TAG" | cut -d. -f2)
-            PATCH=$(echo "$LATEST_TAG" | cut -d. -f3)
-            PATCH=$((PATCH + 1))
-            VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-          fi
-          echo "tag=${PREFIX}${VERSION}" >> "$GITHUB_OUTPUT"
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          generate_release_notes: true
+    uses: shepard-labs/.github/.github/workflows/module-release.yml@main
+    with:
+      module: ${{ matrix.module }}
