@@ -104,7 +104,7 @@ jobs:
     needs: [test, staticcheck]
     permissions:
       contents: write
-      models: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
