@@ -66,6 +66,8 @@ type fakeGCSObject struct {
 	body      string
 	readerErr error
 	deleteErr error
+	attrs     *storage.ObjectAttrs
+	attrsErr  error
 	writer    *fakeGCSWriter
 }
 
@@ -81,6 +83,16 @@ func (f *fakeGCSObject) NewReader(context.Context) (io.ReadCloser, error) {
 		return nil, f.readerErr
 	}
 	return io.NopCloser(strings.NewReader(f.body)), nil
+}
+
+func (f *fakeGCSObject) Attrs(context.Context) (*storage.ObjectAttrs, error) {
+	if f.attrsErr != nil {
+		return nil, f.attrsErr
+	}
+	if f.attrs != nil {
+		return f.attrs, nil
+	}
+	return &storage.ObjectAttrs{Name: f.name}, nil
 }
 
 func (f *fakeGCSObject) Delete(context.Context) error { return f.deleteErr }
@@ -214,6 +226,77 @@ func TestDownloadAndDeleteErrors(t *testing.T) {
 	}
 	if err := newFakeClient(&fakeGCSObject{deleteErr: errors.New("delete")}, 10).Delete(context.Background(), "object"); err == nil {
 		t.Fatal("expected delete error")
+	}
+}
+
+func TestStat(t *testing.T) {
+	updated := time.Now()
+	obj := &fakeGCSObject{attrs: &storage.ObjectAttrs{Name: "obj", Size: 5, ContentType: "text/plain", Updated: updated}}
+	c := newFakeClient(obj, 10)
+
+	info, err := c.Stat(context.Background(), "obj")
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	if info.Name != "obj" || info.Size != 5 || info.ContentType != "text/plain" || !info.Updated.Equal(updated) {
+		t.Fatalf("unexpected object info: %#v", info)
+	}
+}
+
+func TestExistsStatErrors(t *testing.T) {
+	if _, err := newFakeClient(&fakeGCSObject{attrsErr: storage.ErrObjectNotExist}, 10).Stat(context.Background(), "object"); !errors.Is(err, clientstorage.ErrObjectNotFound) {
+		t.Fatalf("expected stat not found, got %v", err)
+	}
+	if _, err := newFakeClient(&fakeGCSObject{attrsErr: errors.New("attrs")}, 10).Stat(context.Background(), "object"); err == nil {
+		t.Fatal("expected stat error")
+	}
+
+	exists, err := newFakeClient(&fakeGCSObject{attrsErr: storage.ErrObjectNotExist}, 10).Exists(context.Background(), "object")
+	if err != nil || exists {
+		t.Fatalf("expected (false, nil), got (%v, %v)", exists, err)
+	}
+	exists, err = newFakeClient(&fakeGCSObject{attrsErr: errors.New("attrs")}, 10).Exists(context.Background(), "object")
+	if err == nil || exists {
+		t.Fatalf("expected (false, err), got (%v, %v)", exists, err)
+	}
+	exists, err = newFakeClient(&fakeGCSObject{}, 10).Exists(context.Background(), "object")
+	if err != nil || !exists {
+		t.Fatalf("expected (true, nil), got (%v, %v)", exists, err)
+	}
+
+	if _, err := newFakeClient(&fakeGCSObject{}, 10).Stat(context.Background(), "/bad"); err == nil {
+		t.Fatal("expected stat validation error")
+	}
+	if _, err := newFakeClient(&fakeGCSObject{}, 10).Exists(context.Background(), "../bad"); err == nil {
+		t.Fatal("expected exists validation error")
+	}
+}
+
+func TestDownloadReader(t *testing.T) {
+	obj := &fakeGCSObject{body: "content"}
+	c := newFakeClient(obj, 10)
+
+	reader, err := c.DownloadReader(context.Background(), "object")
+	if err != nil {
+		t.Fatalf("DownloadReader failed: %v", err)
+	}
+	defer reader.Close()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+	if string(data) != "content" {
+		t.Fatalf("unexpected data %q", data)
+	}
+
+	if _, err := newFakeClient(&fakeGCSObject{readerErr: storage.ErrObjectNotExist}, 10).DownloadReader(context.Background(), "object"); !errors.Is(err, clientstorage.ErrObjectNotFound) {
+		t.Fatalf("expected not found, got %v", err)
+	}
+	if _, err := newFakeClient(&fakeGCSObject{readerErr: errors.New("read")}, 10).DownloadReader(context.Background(), "object"); err == nil {
+		t.Fatal("expected reader error")
+	}
+	if _, err := newFakeClient(&fakeGCSObject{}, 10).DownloadReader(context.Background(), "/bad"); err == nil {
+		t.Fatal("expected download reader validation error")
 	}
 }
 

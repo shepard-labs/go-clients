@@ -67,6 +67,9 @@ s, err = r2.New(accountID, accessKey, secret, "my-bucket", "my-service", logger)
 err = s.Upload(ctx, "path/to/object", content, "application/pdf")
 err = s.UploadReader(ctx, "path/to/object", reader, "application/pdf", size)
 data, err := s.Download(ctx, "path/to/object")
+ok, err := s.Exists(ctx, "path/to/object")      // metadata-only existence check
+info, err := s.Stat(ctx, "path/to/object")       // ObjectInfo: size, content-type, updated
+rc, err := s.DownloadReader(ctx, "path/to/object") // streaming; caller must Close rc
 objects, err := s.List(ctx, "path/to/") // empty prefix lists the whole bucket
 err = s.Delete(ctx, "path/to/object")
 err = s.Close()
@@ -74,7 +77,10 @@ err = s.Close()
 
 The bucket is supplied at construction. Application-specific path conventions
 are intentionally out of scope — build them on top of a `storage.Storage`
-value.
+value. `Download` buffers the whole object in memory (bounded by the
+configured max-download, `storage.DefaultMaxDownloadBytes` by default), while
+`DownloadReader` streams it uncapped — the caller owns closing and bounding
+the stream.
 
 ## kms
 

@@ -4,7 +4,8 @@
 // Each implementation binds its destination bucket and credentials at
 // construction time. The Storage interface covers the operations common to
 // all providers: uploading bytes, streaming uploads from a reader,
-// downloading, listing, and deleting objects by name.
+// downloading, streaming downloads, existence and metadata checks, listing,
+// and deleting objects by name.
 //
 // Application-specific path conventions (e.g. building object names from
 // business identifiers) are intentionally out of scope; build those on top of
@@ -79,6 +80,22 @@ type Storage interface {
 
 	// Download returns the full contents of objectName.
 	Download(ctx context.Context, objectName string) ([]byte, error)
+
+	// Exists reports whether objectName exists, via a metadata-only check (no
+	// object contents are transferred).
+	Exists(ctx context.Context, objectName string) (bool, error)
+
+	// Stat returns metadata for objectName without downloading its contents.
+	// Returns ErrObjectNotFound if the object does not exist.
+	Stat(ctx context.Context, objectName string) (ObjectInfo, error)
+
+	// DownloadReader streams the contents of objectName. The caller must Close
+	// the returned reader; its lifetime is governed by the caller's context, not
+	// a client-side timeout. Unlike Download it does NOT buffer the object or
+	// enforce the configured max-download cap — bounding the stream is the
+	// caller's responsibility (do not io.ReadAll an object of unknown size).
+	// Returns ErrObjectNotFound if the object does not exist.
+	DownloadReader(ctx context.Context, objectName string) (io.ReadCloser, error)
 
 	// List returns objects whose names begin with prefix. An empty prefix
 	// lists the whole bucket. Results are unordered.

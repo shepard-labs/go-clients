@@ -34,9 +34,17 @@ type Client struct {
 	maxDownload int64
 }
 
+// r2Object is a readable object handle returned by GetObject. It is satisfied
+// by *minio.Object.
+type r2Object interface {
+	io.ReadCloser
+	Stat() (minio.ObjectInfo, error)
+}
+
 type r2Client interface {
 	PutObject(context.Context, string, string, io.Reader, int64, minio.PutObjectOptions) (minio.UploadInfo, error)
-	GetObject(context.Context, string, string, minio.GetObjectOptions) (io.ReadCloser, error)
+	GetObject(context.Context, string, string, minio.GetObjectOptions) (r2Object, error)
+	StatObject(context.Context, string, string, minio.StatObjectOptions) (minio.ObjectInfo, error)
 	ListObjects(context.Context, string, minio.ListObjectsOptions) <-chan minio.ObjectInfo
 	RemoveObject(context.Context, string, string, minio.RemoveObjectOptions) error
 }
@@ -47,8 +55,12 @@ func (a minioAdapter) PutObject(ctx context.Context, bucket, objectName string, 
 	return a.client.PutObject(ctx, bucket, objectName, r, size, opts)
 }
 
-func (a minioAdapter) GetObject(ctx context.Context, bucket, objectName string, opts minio.GetObjectOptions) (io.ReadCloser, error) {
+func (a minioAdapter) GetObject(ctx context.Context, bucket, objectName string, opts minio.GetObjectOptions) (r2Object, error) {
 	return a.client.GetObject(ctx, bucket, objectName, opts)
+}
+
+func (a minioAdapter) StatObject(ctx context.Context, bucket, objectName string, opts minio.StatObjectOptions) (minio.ObjectInfo, error) {
+	return a.client.StatObject(ctx, bucket, objectName, opts)
 }
 
 func (a minioAdapter) RemoveObject(ctx context.Context, bucket, objectName string, opts minio.RemoveObjectOptions) error {
@@ -208,6 +220,101 @@ func (c *Client) Download(ctx context.Context, objectName string) ([]byte, error
 		return nil, fmt.Errorf("%w: %s", clientstorage.ErrObjectTooLarge, objectName)
 	}
 	return data, nil
+}
+
+// Stat returns metadata for objectName without downloading its contents. It
+// implements storage.Storage.
+func (c *Client) Stat(ctx context.Context, objectName string) (clientstorage.ObjectInfo, error) {
+	if err := clientstorage.ValidateObjectName(objectName); err != nil {
+		return clientstorage.ObjectInfo{}, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
+	defer cancel()
+
+	c.logger.Info("stat object in R2",
+		zap.String("bucket", c.bucket),
+		zap.String("object", objectName),
+	)
+
+	oi, err := c.client.StatObject(ctx, c.bucket, objectName, minio.StatObjectOptions{})
+	if err != nil {
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return clientstorage.ObjectInfo{}, fmt.Errorf("%w: %s", clientstorage.ErrObjectNotFound, objectName)
+		}
+		c.logger.Warn("failed to stat object in R2", zap.Error(err), zap.String("object", objectName))
+		return clientstorage.ObjectInfo{}, fmt.Errorf("r2 stat object failed: %w", err)
+	}
+
+	return clientstorage.ObjectInfo{
+		Name:        oi.Key,
+		Size:        oi.Size,
+		ContentType: oi.ContentType,
+		Updated:     oi.LastModified,
+	}, nil
+}
+
+// Exists reports whether objectName exists via a metadata-only check. It
+// implements storage.Storage.
+func (c *Client) Exists(ctx context.Context, objectName string) (bool, error) {
+	if err := clientstorage.ValidateObjectName(objectName); err != nil {
+		return false, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
+	defer cancel()
+
+	c.logger.Info("checking object existence in R2",
+		zap.String("bucket", c.bucket),
+		zap.String("object", objectName),
+	)
+
+	_, err := c.client.StatObject(ctx, c.bucket, objectName, minio.StatObjectOptions{})
+	if err != nil {
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return false, nil
+		}
+		c.logger.Warn("failed to stat object in R2", zap.Error(err), zap.String("object", objectName))
+		return false, fmt.Errorf("r2 stat object failed: %w", err)
+	}
+	return true, nil
+}
+
+// DownloadReader streams the contents of objectName. The caller must Close the
+// returned reader. It implements storage.Storage.
+func (c *Client) DownloadReader(ctx context.Context, objectName string) (io.ReadCloser, error) {
+	if err := clientstorage.ValidateObjectName(objectName); err != nil {
+		return nil, err
+	}
+
+	// No WithTimeout here: the returned stream lives past this function's
+	// return, so a client-side deadline would cancel the caller's reads.
+	c.logger.Info("streaming download from R2",
+		zap.String("bucket", c.bucket),
+		zap.String("object", objectName),
+	)
+
+	obj, err := c.client.GetObject(ctx, c.bucket, objectName, minio.GetObjectOptions{})
+	if err != nil {
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return nil, fmt.Errorf("%w: %s", clientstorage.ErrObjectNotFound, objectName)
+		}
+		c.logger.Warn("failed to get object from R2", zap.Error(err), zap.String("object", objectName))
+		return nil, fmt.Errorf("r2 get object failed: %w", err)
+	}
+
+	// MinIO's GetObject is lazy: it does not issue the request until first
+	// use. Probe Stat to surface NoSuchKey eagerly, for parity with GCS.
+	if _, err := obj.Stat(); err != nil {
+		obj.Close()
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return nil, fmt.Errorf("%w: %s", clientstorage.ErrObjectNotFound, objectName)
+		}
+		c.logger.Warn("failed to stat object from R2", zap.Error(err), zap.String("object", objectName))
+		return nil, fmt.Errorf("r2 stat object failed: %w", err)
+	}
+
+	return obj, nil
 }
 
 // List returns objects whose names begin with prefix. An empty prefix lists

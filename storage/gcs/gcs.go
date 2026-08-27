@@ -56,6 +56,7 @@ type gcsObjectIterator interface {
 type gcsObject interface {
 	NewWriter(context.Context) gcsWriter
 	NewReader(context.Context) (io.ReadCloser, error)
+	Attrs(context.Context) (*storage.ObjectAttrs, error)
 	Delete(context.Context) error
 }
 
@@ -88,6 +89,9 @@ func (a storageObjectAdapter) NewWriter(ctx context.Context) gcsWriter {
 }
 func (a storageObjectAdapter) NewReader(ctx context.Context) (io.ReadCloser, error) {
 	return a.object.NewReader(ctx)
+}
+func (a storageObjectAdapter) Attrs(ctx context.Context) (*storage.ObjectAttrs, error) {
+	return a.object.Attrs(ctx)
 }
 func (a storageObjectAdapter) Delete(ctx context.Context) error       { return a.object.Delete(ctx) }
 func (a storageWriterAdapter) Write(p []byte) (int, error)            { return a.writer.Write(p) }
@@ -241,6 +245,87 @@ func (c *Client) Download(ctx context.Context, objectName string) ([]byte, error
 	}
 
 	return content, nil
+}
+
+// Stat returns metadata for objectName without downloading its contents. It
+// implements storage.Storage.
+func (c *Client) Stat(ctx context.Context, objectName string) (clientstorage.ObjectInfo, error) {
+	if err := clientstorage.ValidateObjectName(objectName); err != nil {
+		return clientstorage.ObjectInfo{}, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	c.logger.Info("statting object in GCS", zap.String("bucket", c.bucket), zap.String("object", objectName))
+
+	obj := c.client.Bucket(c.bucket).Object(objectName)
+	attrs, err := obj.Attrs(ctx)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return clientstorage.ObjectInfo{}, fmt.Errorf("%w: %s", clientstorage.ErrObjectNotFound, objectName)
+		}
+		c.logger.Warn("failed to stat object", zap.Error(err), zap.String("object", objectName))
+		return clientstorage.ObjectInfo{}, fmt.Errorf("failed to stat object: %w", err)
+	}
+
+	return clientstorage.ObjectInfo{
+		Name:        attrs.Name,
+		Size:        attrs.Size,
+		ContentType: attrs.ContentType,
+		Updated:     attrs.Updated,
+	}, nil
+}
+
+// Exists reports whether objectName exists, via a metadata-only check. It
+// implements storage.Storage.
+func (c *Client) Exists(ctx context.Context, objectName string) (bool, error) {
+	if err := clientstorage.ValidateObjectName(objectName); err != nil {
+		return false, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	c.logger.Info("checking object existence in GCS", zap.String("bucket", c.bucket), zap.String("object", objectName))
+
+	obj := c.client.Bucket(c.bucket).Object(objectName)
+	if _, err := obj.Attrs(ctx); err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return false, nil
+		}
+		c.logger.Warn("failed to check object existence", zap.Error(err), zap.String("object", objectName))
+		return false, fmt.Errorf("failed to check object existence: %w", err)
+	}
+
+	return true, nil
+}
+
+// DownloadReader streams the contents of objectName. It implements
+// storage.Storage. The caller must Close the returned reader. Unlike Download
+// the stream is uncapped: no maxDownload limit is applied, so bounding the
+// read is the caller's responsibility.
+func (c *Client) DownloadReader(ctx context.Context, objectName string) (io.ReadCloser, error) {
+	if err := clientstorage.ValidateObjectName(objectName); err != nil {
+		return nil, err
+	}
+
+	// Deliberately no context.WithTimeout here: the returned reader is a live
+	// stream, and a deferred cancel would kill it as soon as this method
+	// returns. The caller's context governs the stream's lifetime.
+	c.logger.Info("opening download stream from GCS", zap.String("bucket", c.bucket), zap.String("object", objectName))
+
+	obj := c.client.Bucket(c.bucket).Object(objectName)
+	reader, err := obj.NewReader(ctx)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return nil, fmt.Errorf("%w: %s", clientstorage.ErrObjectNotFound, objectName)
+		}
+		c.logger.Warn("failed to open object", zap.Error(err), zap.String("object", objectName))
+		return nil, fmt.Errorf("failed to open object: %w", err)
+	}
+
+	return reader, nil
 }
 
 // List returns objects whose names begin with prefix. An empty prefix lists

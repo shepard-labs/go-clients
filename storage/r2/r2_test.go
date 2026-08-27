@@ -15,16 +15,19 @@ import (
 )
 
 type fakeR2Client struct {
-	putBucket string
-	putObject string
-	putBody   string
-	putType   string
-	putMeta   map[string]string
-	putErr    error
-	getBody   string
-	getReader io.ReadCloser
-	getErr    error
-	removeErr error
+	putBucket  string
+	putObject  string
+	putBody    string
+	putType    string
+	putMeta    map[string]string
+	putErr     error
+	getBody    string
+	getReader  io.ReadCloser
+	getErr     error
+	getStatErr error
+	statInfo   minio.ObjectInfo
+	statErr    error
+	removeErr  error
 
 	listObjects []minio.ObjectInfo
 	listPrefix  string
@@ -43,14 +46,25 @@ func (f *fakeR2Client) PutObject(_ context.Context, bucket, objectName string, r
 	return minio.UploadInfo{Size: size}, nil
 }
 
-func (f *fakeR2Client) GetObject(context.Context, string, string, minio.GetObjectOptions) (io.ReadCloser, error) {
+type fakeR2Object struct {
+	io.ReadCloser
+	statErr error
+}
+
+func (f fakeR2Object) Stat() (minio.ObjectInfo, error) { return minio.ObjectInfo{}, f.statErr }
+
+func (f *fakeR2Client) GetObject(context.Context, string, string, minio.GetObjectOptions) (r2Object, error) {
 	if f.getErr != nil {
 		return nil, f.getErr
 	}
 	if f.getReader != nil {
-		return f.getReader, nil
+		return fakeR2Object{ReadCloser: f.getReader, statErr: f.getStatErr}, nil
 	}
-	return io.NopCloser(strings.NewReader(f.getBody)), nil
+	return fakeR2Object{ReadCloser: io.NopCloser(strings.NewReader(f.getBody)), statErr: f.getStatErr}, nil
+}
+
+func (f *fakeR2Client) StatObject(context.Context, string, string, minio.StatObjectOptions) (minio.ObjectInfo, error) {
+	return f.statInfo, f.statErr
 }
 
 type failingReadCloser struct{ err error }
@@ -139,6 +153,91 @@ func TestDownloadErrors(t *testing.T) {
 	c = testClient(&fakeR2Client{getReader: failingReadCloser{err: errors.New("read")}}, 10)
 	if _, err := c.Download(context.Background(), "object"); err == nil {
 		t.Fatal("expected read error")
+	}
+}
+
+func TestStat(t *testing.T) {
+	updated := time.Now()
+	fake := &fakeR2Client{statInfo: minio.ObjectInfo{Key: "obj", Size: 5, ContentType: "text/plain", LastModified: updated}}
+	c := testClient(fake, 10)
+
+	info, err := c.Stat(context.Background(), "obj")
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	if info.Name != "obj" || info.Size != 5 || info.ContentType != "text/plain" || !info.Updated.Equal(updated) {
+		t.Fatalf("unexpected object info: %#v", info)
+	}
+}
+
+func TestStatExistsErrors(t *testing.T) {
+	missing := minio.ErrorResponse{Code: "NoSuchKey"}
+
+	c := testClient(&fakeR2Client{statErr: missing}, 10)
+	if _, err := c.Stat(context.Background(), "obj"); !errors.Is(err, clientstorage.ErrObjectNotFound) {
+		t.Fatalf("expected not found, got %v", err)
+	}
+
+	c = testClient(&fakeR2Client{statErr: errors.New("boom")}, 10)
+	if _, err := c.Stat(context.Background(), "obj"); err == nil {
+		t.Fatal("expected stat error")
+	}
+
+	c = testClient(&fakeR2Client{statErr: missing}, 10)
+	exists, err := c.Exists(context.Background(), "obj")
+	if err != nil || exists {
+		t.Fatalf("expected (false, nil), got (%v, %v)", exists, err)
+	}
+
+	c = testClient(&fakeR2Client{statErr: errors.New("boom")}, 10)
+	exists, err = c.Exists(context.Background(), "obj")
+	if err == nil || exists {
+		t.Fatalf("expected (false, err), got (%v, %v)", exists, err)
+	}
+
+	c = testClient(&fakeR2Client{statInfo: minio.ObjectInfo{Key: "obj", Size: 5}}, 10)
+	exists, err = c.Exists(context.Background(), "obj")
+	if err != nil || !exists {
+		t.Fatalf("expected (true, nil), got (%v, %v)", exists, err)
+	}
+}
+
+func TestDownloadReader(t *testing.T) {
+	missing := minio.ErrorResponse{Code: "NoSuchKey"}
+
+	c := testClient(&fakeR2Client{getBody: "content"}, 10)
+	r, err := c.DownloadReader(context.Background(), "obj")
+	if err != nil {
+		t.Fatalf("DownloadReader failed: %v", err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	if string(data) != "content" {
+		t.Fatalf("unexpected data %q", data)
+	}
+
+	c = testClient(&fakeR2Client{getErr: missing}, 10)
+	if _, err := c.DownloadReader(context.Background(), "obj"); !errors.Is(err, clientstorage.ErrObjectNotFound) {
+		t.Fatalf("expected not found, got %v", err)
+	}
+
+	// Eager Stat probe surfaces lazy-GetObject NoSuchKey.
+	c = testClient(&fakeR2Client{getBody: "content", getStatErr: missing}, 10)
+	if _, err := c.DownloadReader(context.Background(), "obj"); !errors.Is(err, clientstorage.ErrObjectNotFound) {
+		t.Fatalf("expected not found from stat probe, got %v", err)
+	}
+
+	c = testClient(&fakeR2Client{}, 10)
+	if _, err := c.DownloadReader(context.Background(), "/bad"); err == nil {
+		t.Fatal("expected validation error")
+	}
+	if _, err := c.DownloadReader(context.Background(), ""); err == nil {
+		t.Fatal("expected validation error")
 	}
 }
 
