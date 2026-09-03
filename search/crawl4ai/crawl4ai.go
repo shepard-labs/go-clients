@@ -409,8 +409,9 @@ type statusResponse struct {
 }
 
 // submitJob enqueues an async crawl job for urls and returns its task id.
-func (c *Client) submitJob(ctx context.Context, urls []string, crawlerConfig map[string]any) (string, error) {
-	req := submitRequest{URLs: urls, CrawlerConfig: crawlerConfig}
+// Nil configs are omitted from the submit body.
+func (c *Client) submitJob(ctx context.Context, urls []string, browserConfig, crawlerConfig map[string]any) (string, error) {
+	req := submitRequest{URLs: urls, BrowserConfig: browserConfig, CrawlerConfig: crawlerConfig}
 	var resp submitResponse
 	if err := c.doJSON(ctx, http.MethodPost, "/crawl/job", req, &resp); err != nil {
 		return "", fmt.Errorf("submit crawl job: %w", err)
@@ -492,8 +493,18 @@ func (c *Client) Search(ctx context.Context, q *search.SearchQuery) (*search.Sea
 // which has no field on search.Document) is rejected with an
 // ErrInvalidRequest-wrapped error before any I/O. Accepted formats are
 // otherwise not forwarded: the server always returns the full result
-// (markdown, html, links).
+// (markdown, html, links). It submits with no run-config overrides.
 func (c *Client) Scrape(ctx context.Context, r *search.ScrapeRequest) (*search.Document, error) {
+	return c.ScrapeWithOptions(ctx, r, nil)
+}
+
+// ScrapeWithOptions is Scrape with per-request run configuration. opts may
+// be nil (no overrides). The option maps are deep-copied at entry: the
+// caller retains ownership and they are never read after return.
+func (c *Client) ScrapeWithOptions(ctx context.Context, r *search.ScrapeRequest, opts *RunOptions) (*search.Document, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("crawl4ai: scrape: %w: nil context", search.ErrInvalidRequest)
+	}
 	if err := r.Validate(); err != nil {
 		return nil, fmt.Errorf("crawl4ai: scrape: %w", err)
 	}
@@ -504,7 +515,22 @@ func (c *Client) Scrape(ctx context.Context, r *search.ScrapeRequest) (*search.D
 			return nil, fmt.Errorf("crawl4ai: scrape: %w: unsupported format %q", search.ErrInvalidRequest, f)
 		}
 	}
-	taskID, err := c.submitJob(ctx, []string{r.URL}, nil)
+	browserJSON, crawlerJSON, err := opts.marshalValidated()
+	if err != nil {
+		return nil, fmt.Errorf("crawl4ai: scrape: %w", err)
+	}
+	browserConfig, err := copyValidated(browserJSON)
+	if err != nil {
+		return nil, fmt.Errorf("crawl4ai: scrape: %w", err)
+	}
+	crawlerConfig, err := copyValidated(crawlerJSON)
+	if err != nil {
+		return nil, fmt.Errorf("crawl4ai: scrape: %w", err)
+	}
+	c.logger.Debug("crawl4ai: scrape with run options",
+		zap.Int("browser_config_bytes", len(browserJSON)),
+		zap.Int("crawler_config_bytes", len(crawlerJSON)))
+	taskID, err := c.submitJob(ctx, []string{r.URL}, browserConfig, crawlerConfig)
 	if err != nil {
 		c.logger.Error("crawl4ai: scrape submit failed")
 		return nil, fmt.Errorf("crawl4ai: scrape: %w", err)
@@ -530,11 +556,43 @@ func (c *Client) Scrape(ctx context.Context, r *search.ScrapeRequest) (*search.D
 // as a "max_pages" hint inside crawler_config; the 0.9 network boundary
 // rejects declarative deep-crawl strategies, so wider expansion requires
 // server-side configuration and the hint may be dropped by the server.
+// It submits with no run-config overrides.
 func (c *Client) Crawl(ctx context.Context, r *search.CrawlRequest) (*search.CrawlPage, error) {
+	return c.CrawlWithOptions(ctx, r, nil)
+}
+
+// CrawlWithOptions is Crawl with per-request run configuration. opts may be
+// nil (no overrides). The option maps are deep-copied at entry: the caller
+// retains ownership and they are never read after return. MaxPages always
+// wins: it overwrites any pre-existing "max_pages" entry in the copied
+// crawler config.
+func (c *Client) CrawlWithOptions(ctx context.Context, r *search.CrawlRequest, opts *RunOptions) (*search.CrawlPage, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("crawl4ai: crawl: %w: nil context", search.ErrInvalidRequest)
+	}
 	if err := r.Validate(); err != nil {
 		return nil, fmt.Errorf("crawl4ai: crawl: %w", err)
 	}
-	taskID, err := c.StartCrawl(ctx, r)
+	browserJSON, crawlerJSON, err := opts.marshalValidated()
+	if err != nil {
+		return nil, fmt.Errorf("crawl4ai: crawl: %w", err)
+	}
+	browserConfig, err := copyValidated(browserJSON)
+	if err != nil {
+		return nil, fmt.Errorf("crawl4ai: crawl: %w", err)
+	}
+	crawlerConfig, err := copyValidated(crawlerJSON)
+	if err != nil {
+		return nil, fmt.Errorf("crawl4ai: crawl: %w", err)
+	}
+	if crawlerConfig == nil {
+		crawlerConfig = make(map[string]any, 1)
+	}
+	crawlerConfig["max_pages"] = r.MaxPages
+	c.logger.Debug("crawl4ai: crawl with run options",
+		zap.Int("browser_config_bytes", len(browserJSON)),
+		zap.Int("crawler_config_bytes", len(crawlerJSON)))
+	taskID, err := c.submitJob(ctx, []string{r.StartURL}, browserConfig, crawlerConfig)
 	if err != nil {
 		c.logger.Error("crawl4ai: crawl submit failed")
 		return nil, fmt.Errorf("crawl4ai: crawl: %w", err)
@@ -553,7 +611,7 @@ func (c *Client) StartCrawl(ctx context.Context, r *search.CrawlRequest) (string
 	if err := r.Validate(); err != nil {
 		return "", fmt.Errorf("crawl4ai: start crawl: %w", err)
 	}
-	taskID, err := c.submitJob(ctx, []string{r.StartURL}, map[string]any{"max_pages": r.MaxPages})
+	taskID, err := c.submitJob(ctx, []string{r.StartURL}, nil, map[string]any{"max_pages": r.MaxPages})
 	if err != nil {
 		return "", fmt.Errorf("crawl4ai: start crawl: %w", err)
 	}
