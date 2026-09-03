@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -191,6 +192,27 @@ func TestCrawlFailedTerminal(t *testing.T) {
 	}
 }
 
+func TestCrawlPollTimeout(t *testing.T) {
+	polls := &atomic.Int64{}
+	c, _ := newTestClient(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodPost {
+			return jsonResp(202, `{"task_id":"crawl_slow"}`), nil
+		}
+		polls.Add(1)
+		return jsonResp(200, `{"task_id":"crawl_slow","status":"processing"}`), nil
+	})
+	c.pollInterval = time.Nanosecond
+	c.maxPollWait = 5 * time.Millisecond
+
+	_, err := c.Crawl(context.Background(), &search.CrawlRequest{StartURL: "https://example.com", MaxPages: 2})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+	}
+	if polls.Load() == 0 {
+		t.Fatalf("expected at least one status poll before timing out")
+	}
+}
+
 func TestCrawlContextCancelMidPoll(t *testing.T) {
 	c, _ := newTestClient(func(r *http.Request) (*http.Response, error) {
 		if r.Method == http.MethodPost {
@@ -277,6 +299,29 @@ func TestJobStatus(t *testing.T) {
 	}
 	if page == nil || len(page.Documents) != 1 || page.Documents[0].Markdown != "# Done" {
 		t.Fatalf("unexpected completed page: %+v", page)
+	}
+}
+
+func TestJobStatusEscapesTaskID(t *testing.T) {
+	const taskID = "job/with space"
+	var gotEscaped string
+	c, _ := newTestClient(func(r *http.Request) (*http.Response, error) {
+		gotEscaped = r.URL.EscapedPath()
+		return jsonResp(200, `{"task_id":"job/with space","status":"processing"}`), nil
+	})
+
+	page, status, err := c.JobStatus(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if page != nil {
+		t.Fatalf("expected nil page while processing, got %+v", page)
+	}
+	if status != "processing" {
+		t.Fatalf("expected status processing, got %q", status)
+	}
+	if want := "/crawl/job/" + url.PathEscape(taskID); gotEscaped != want {
+		t.Fatalf("escaped path = %q, want %q (task id must stay a single segment)", gotEscaped, want)
 	}
 }
 

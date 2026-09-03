@@ -54,10 +54,10 @@ const (
 	defaultTimeout = 30 * time.Second
 	maxAttempts    = 3
 
-	// pollInterval is the delay between Crawl status polls.
-	pollInterval = 2 * time.Second
-	// maxPollWait bounds the total time Crawl spends polling.
-	maxPollWait = 5 * time.Minute
+	// defaultPollInterval is the delay between Crawl status polls.
+	defaultPollInterval = 2 * time.Second
+	// defaultMaxPollWait bounds the total time Crawl spends polling.
+	defaultMaxPollWait = 5 * time.Minute
 )
 
 // Ensure *Client satisfies the shared interface.
@@ -71,7 +71,11 @@ type Client struct {
 	logger     *zap.Logger
 	apiKey     string
 	baseURL    string
-	sleeper    func(context.Context, time.Duration) bool // defaults to sleepCtx; injectable in tests
+	// pollInterval is the delay between Crawl status polls.
+	pollInterval time.Duration
+	// maxPollWait bounds the total time Crawl spends polling.
+	maxPollWait time.Duration
+	sleeper     func(context.Context, time.Duration) bool // defaults to sleepCtx; injectable in tests
 }
 
 // Option customizes a Client.
@@ -85,7 +89,10 @@ func WithHTTPClient(hc *http.Client) Option {
 			return
 		}
 		if hc.Timeout == 0 {
-			hc.Timeout = defaultTimeout
+			cp := *hc
+			cp.Timeout = defaultTimeout
+			c.httpClient = &cp
+			return
 		}
 		c.httpClient = hc
 	}
@@ -110,11 +117,13 @@ func New(apiKey string, logger *zap.Logger, opts ...Option) search.Client {
 		logger = zap.NewNop()
 	}
 	c := &Client{
-		httpClient: &http.Client{Timeout: defaultTimeout},
-		logger:     logger,
-		apiKey:     apiKey,
-		baseURL:    defaultBaseURL,
-		sleeper:    sleepCtx,
+		httpClient:   &http.Client{Timeout: defaultTimeout},
+		logger:       logger,
+		apiKey:       apiKey,
+		baseURL:      defaultBaseURL,
+		pollInterval: defaultPollInterval,
+		maxPollWait:  defaultMaxPollWait,
+		sleeper:      sleepCtx,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -306,12 +315,15 @@ func (c *Client) doRequest(ctx context.Context, method, path string, payload any
 				return nil, err
 			}
 			lastErr = err
+			if !c.sleep(ctx, time.Duration(attempt+1)*200*time.Millisecond) {
+				return nil, ctx.Err()
+			}
 			continue
 		}
 
 		switch {
 		case resp.StatusCode >= 500:
-			lastErr = fmt.Errorf("firecrawl: server error: %d", resp.StatusCode)
+			lastErr = parseAPIError(resp.StatusCode, respBody)
 			c.logger.Error("firecrawl: server error; retrying", zap.Int("status", resp.StatusCode))
 			if !c.sleep(ctx, time.Duration(attempt+1)*500*time.Millisecond) {
 				return nil, ctx.Err()
@@ -329,6 +341,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, payload any
 			apiErr := parseAPIError(resp.StatusCode, respBody)
 			c.logger.Error("firecrawl: request failed", zap.Int("status", resp.StatusCode))
 			return nil, apiErr
+		case resp.StatusCode >= 300:
+			c.logger.Error("firecrawl: unexpected status", zap.Int("status", resp.StatusCode))
+			return nil, fmt.Errorf("firecrawl: unexpected status %d", resp.StatusCode)
 		}
 
 		if failed := envelopeError(resp.StatusCode, respBody); failed != nil {
@@ -633,7 +648,7 @@ func (c *Client) Crawl(ctx context.Context, r *search.CrawlRequest) (*search.Cra
 		return nil, err
 	}
 
-	deadline := time.Now().Add(maxPollWait)
+	deadline := time.Now().Add(c.maxPollWait)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -650,9 +665,9 @@ func (c *Client) Crawl(ctx context.Context, r *search.CrawlRequest) (*search.Cra
 		}
 		if time.Now().After(deadline) {
 			c.logger.Error("firecrawl: crawl polling timed out")
-			return nil, fmt.Errorf("firecrawl: crawl polling timed out after %s", maxPollWait)
+			return nil, fmt.Errorf("firecrawl: crawl polling timed out after %s: %w", c.maxPollWait, context.DeadlineExceeded)
 		}
-		if !c.sleep(ctx, pollInterval) {
+		if !c.sleep(ctx, c.pollInterval) {
 			return nil, ctx.Err()
 		}
 	}

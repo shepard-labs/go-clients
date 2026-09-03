@@ -86,9 +86,13 @@ func WithHTTPClient(h *http.Client) Option {
 	}
 }
 
-// WithBaseURL overrides the API base URL. A trailing "/" is trimmed.
+// WithBaseURL overrides the API base URL. A trailing "/" is trimmed; a blank
+// value is ignored.
 func WithBaseURL(u string) Option {
 	return func(c *Client) {
+		if strings.TrimSpace(u) == "" {
+			return
+		}
 		c.baseURL = strings.TrimRight(u, "/")
 	}
 }
@@ -108,6 +112,9 @@ func New(apiKey string, logger *zap.Logger, opts ...Option) search.Client {
 		sleeper:    sleepCtx,
 	}
 	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
 		opt(c)
 	}
 	if c.httpClient == nil {
@@ -115,6 +122,9 @@ func New(apiKey string, logger *zap.Logger, opts ...Option) search.Client {
 	}
 	if c.logger == nil {
 		c.logger = zap.NewNop()
+	}
+	if c.baseURL == "" {
+		c.baseURL = defaultBaseURL
 	}
 	if c.sleeper == nil {
 		c.sleeper = sleepCtx
@@ -238,8 +248,11 @@ func (c *Client) doRequest(ctx context.Context, method, path string, bodyBytes [
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("exa: request failed: %w", err)
-			if attempt == maxAttempts || !c.sleeper(ctx, time.Duration(attempt)*200*time.Millisecond) {
+			if attempt == maxAttempts {
 				break
+			}
+			if !c.sleeper(ctx, time.Duration(attempt)*200*time.Millisecond) {
+				return nil, ctx.Err()
 			}
 			continue
 		}
@@ -251,23 +264,32 @@ func (c *Client) doRequest(ctx context.Context, method, path string, bodyBytes [
 				return nil, err
 			}
 			lastErr = err
-			if attempt == maxAttempts || !c.sleeper(ctx, time.Duration(attempt)*200*time.Millisecond) {
+			if attempt == maxAttempts {
 				break
+			}
+			if !c.sleeper(ctx, time.Duration(attempt)*200*time.Millisecond) {
+				return nil, ctx.Err()
 			}
 			continue
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
 			lastErr = parseAPIError(resp.StatusCode, respBody)
-			if attempt == maxAttempts || !c.sleeper(ctx, retryAfterDelay(resp.Header.Get("Retry-After"), attempt)) {
+			if attempt == maxAttempts {
 				break
+			}
+			if !c.sleeper(ctx, retryAfterDelay(resp.Header.Get("Retry-After"), attempt)) {
+				return nil, ctx.Err()
 			}
 			continue
 		}
 		if resp.StatusCode >= 500 {
 			lastErr = parseAPIError(resp.StatusCode, respBody)
-			if attempt == maxAttempts || !c.sleeper(ctx, time.Duration(attempt)*500*time.Millisecond) {
+			if attempt == maxAttempts {
 				break
+			}
+			if !c.sleeper(ctx, time.Duration(attempt)*500*time.Millisecond) {
+				return nil, ctx.Err()
 			}
 			continue
 		}

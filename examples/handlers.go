@@ -274,7 +274,7 @@ func (s *server) searchCrawl(c *gin.Context) {
 			abortError(c, http.StatusBadRequest, "invalid crawl request")
 		case errors.Is(err, search.ErrNotSupported):
 			abortError(c, http.StatusNotImplemented, "crawl not supported by provider")
-		case errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil:
+		case errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded):
 			s.logger.Error("search crawl timed out", zap.Error(err))
 			abortError(c, http.StatusGatewayTimeout, "search crawl timed out")
 		default:

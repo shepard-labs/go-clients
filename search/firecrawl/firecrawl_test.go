@@ -382,6 +382,27 @@ func TestCrawlStatusTerminalStates(t *testing.T) {
 	}
 }
 
+func TestCrawlPollTimeout(t *testing.T) {
+	statusCalls := &atomic.Int64{}
+	c, _ := stubClient(rtFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodPost {
+			return resp(http.StatusOK, `{"success":true,"id":"job-timeout"}`, nil), nil
+		}
+		statusCalls.Add(1)
+		return resp(http.StatusOK, `{"success":true,"status":"scraping","data":[]}`, nil), nil
+	}))
+	c.pollInterval = time.Nanosecond
+	c.maxPollWait = 5 * time.Millisecond
+
+	_, err := c.Crawl(context.Background(), &search.CrawlRequest{StartURL: "https://example.com", MaxPages: 5})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+	}
+	if statusCalls.Load() == 0 {
+		t.Fatalf("expected at least one status poll before timing out")
+	}
+}
+
 func TestCrawlContextCancelledMidPoll(t *testing.T) {
 	c, _ := stubClient(rtFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Method == http.MethodPost {
@@ -475,6 +496,10 @@ func TestRetryExhaustionPersistent500(t *testing.T) {
 	_, err := c.Search(context.Background(), &search.SearchQuery{Query: "golang", NumResults: 5})
 	if err == nil {
 		t.Fatalf("expected error after retries, got nil")
+	}
+	apiErr := asAPIError(t, err)
+	if apiErr.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d (%v)", apiErr.StatusCode, apiErr)
 	}
 	if calls.Load() != 3 {
 		t.Fatalf("expected exactly 3 HTTP calls, got %d", calls.Load())

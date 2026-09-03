@@ -55,6 +55,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -70,8 +71,8 @@ const defaultBaseURL = "http://localhost:11235"
 // pollInterval is the delay between job-status polls; maxPollWait bounds the
 // total wait for a submitted job.
 const (
-	pollInterval = 2 * time.Second
-	maxPollWait  = 5 * time.Minute
+	defaultPollInterval = 2 * time.Second
+	defaultMaxPollWait  = 5 * time.Minute
 )
 
 // Ensure *Client satisfies the shared interface.
@@ -86,16 +87,32 @@ type Client struct {
 	logger     *zap.Logger
 	baseURL    string
 	token      string
-	sleeper    func(context.Context, time.Duration) bool // defaults to sleepCtx; injectable in tests
+	// pollInterval is the delay between job-status polls.
+	pollInterval time.Duration
+	// maxPollWait bounds the total wait for a submitted job.
+	maxPollWait time.Duration
+	sleeper     func(context.Context, time.Duration) bool // defaults to sleepCtx; injectable in tests
 }
 
 // Option configures a Client.
 type Option func(*Client)
 
 // WithHTTPClient sets the HTTP client. A nil client is ignored; a client
-// without a timeout gets the 30s default.
+// without a timeout gets the 30s default (applied to a copy, leaving the
+// caller's client untouched).
 func WithHTTPClient(h *http.Client) Option {
-	return func(c *Client) { c.httpClient = h }
+	return func(c *Client) {
+		if h == nil {
+			return
+		}
+		if h.Timeout == 0 {
+			cp := *h
+			cp.Timeout = 30 * time.Second
+			c.httpClient = &cp
+			return
+		}
+		c.httpClient = h
+	}
 }
 
 // WithToken sets the Crawl4AI API token sent as "Authorization: Bearer".
@@ -116,10 +133,12 @@ func New(baseURL string, logger *zap.Logger, opts ...Option) search.Client {
 		logger = zap.NewNop()
 	}
 	c := &Client{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		logger:     logger,
-		baseURL:    strings.TrimSuffix(baseURL, "/"),
-		sleeper:    sleepCtx,
+		httpClient:   &http.Client{Timeout: 30 * time.Second},
+		logger:       logger,
+		baseURL:      strings.TrimSuffix(baseURL, "/"),
+		pollInterval: defaultPollInterval,
+		maxPollWait:  defaultMaxPollWait,
+		sleeper:      sleepCtx,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -130,7 +149,9 @@ func New(baseURL string, logger *zap.Logger, opts ...Option) search.Client {
 		c.httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
 	if c.httpClient.Timeout == 0 {
-		c.httpClient.Timeout = 30 * time.Second
+		cp := *c.httpClient
+		cp.Timeout = 30 * time.Second
+		c.httpClient = &cp
 	}
 	if c.sleeper == nil {
 		c.sleeper = sleepCtx
@@ -189,11 +210,12 @@ type apiErrorBody struct {
 }
 
 // parseAPIError builds an *APIError from a non-2xx response. StatusCode is
-// always the HTTP status; on unmarshal failure it falls back to the raw body.
+// always the HTTP status; on unmarshal failure it falls back to the raw body,
+// collapsed and capped at 512 chars.
 func parseAPIError(statusCode int, body []byte) error {
 	var eb apiErrorBody
 	if err := json.Unmarshal(body, &eb); err != nil {
-		return &APIError{StatusCode: statusCode, Message: string(body)}
+		return &APIError{StatusCode: statusCode, Message: truncateSnippet(body)}
 	}
 	msg := eb.Detail
 	if msg == "" {
@@ -203,9 +225,18 @@ func parseAPIError(statusCode int, body []byte) error {
 		msg = eb.Error
 	}
 	if msg == "" {
-		msg = string(body)
+		msg = truncateSnippet(body)
 	}
 	return &APIError{StatusCode: statusCode, Code: eb.Code, Message: msg}
+}
+
+// truncateSnippet collapses whitespace and caps a raw body at 512 chars.
+func truncateSnippet(body []byte) string {
+	s := strings.Join(strings.Fields(string(body)), " ")
+	if len(s) > 512 {
+		s = s[:512]
+	}
+	return s
 }
 
 // readCapped reads and closes rc, capping the body at
@@ -222,8 +253,8 @@ func readCapped(rc io.ReadCloser) (body []byte, tooLarge bool, err error) {
 	return raw, false, nil
 }
 
-// retryAfterDelay honors the Retry-After response header (seconds), falling
-// back to 500ms*attempt when it is absent or unparsable.
+// retryAfterDelay honors the Retry-After response header (delta-seconds or
+// HTTP date), falling back to 500ms*attempt when it is absent or unparsable.
 func retryAfterDelay(header http.Header, attempt int) time.Duration {
 	fallback := time.Duration(attempt+1) * 500 * time.Millisecond
 	v := strings.TrimSpace(header.Get("Retry-After"))
@@ -232,6 +263,11 @@ func retryAfterDelay(header http.Header, attempt int) time.Duration {
 	}
 	if secs, err := strconv.Atoi(v); err == nil && secs >= 0 {
 		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
 	}
 	return fallback
 }
@@ -333,7 +369,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, respO
 	if reqBody != nil {
 		b, err := json.Marshal(reqBody)
 		if err != nil {
-			return fmt.Errorf("marshal request body: %w", err)
+			return fmt.Errorf("crawl4ai: marshal request body: %w", err)
 		}
 		body = b
 	}
@@ -345,7 +381,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, respO
 
 	if respOut != nil {
 		if err := json.Unmarshal(respBody, respOut); err != nil {
-			return fmt.Errorf("unmarshal response: %w", err)
+			return fmt.Errorf("crawl4ai: unmarshal response: %w", err)
 		}
 	}
 	return nil
@@ -393,7 +429,7 @@ func (c *Client) fetchJob(ctx context.Context, taskID string) (*search.CrawlPage
 		return nil, "", fmt.Errorf("fetch job: %w: task id is required", search.ErrInvalidRequest)
 	}
 	var resp statusResponse
-	if err := c.doJSON(ctx, http.MethodGet, "/crawl/job/"+taskID, nil, &resp); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, "/crawl/job/"+url.PathEscape(taskID), nil, &resp); err != nil {
 		return nil, "", fmt.Errorf("fetch job: %w", err)
 	}
 	switch status := strings.ToLower(strings.TrimSpace(resp.Status)); status {
@@ -420,7 +456,7 @@ func (c *Client) fetchJob(ctx context.Context, taskID string) (*search.CrawlPage
 // aggregated documents. Cancelling ctx aborts the wait with ctx.Err(); the
 // server-side job keeps running.
 func (c *Client) pollJob(ctx context.Context, taskID string) (*search.CrawlPage, error) {
-	deadline := time.Now().Add(maxPollWait)
+	deadline := time.Now().Add(c.maxPollWait)
 	for {
 		page, status, err := c.fetchJob(ctx, taskID)
 		if err != nil {
@@ -431,9 +467,9 @@ func (c *Client) pollJob(ctx context.Context, taskID string) (*search.CrawlPage,
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return nil, fmt.Errorf("poll job: timed out after %s: %w", maxPollWait, context.DeadlineExceeded)
+			return nil, fmt.Errorf("poll job: timed out after %s: %w", c.maxPollWait, context.DeadlineExceeded)
 		}
-		wait := pollInterval
+		wait := c.pollInterval
 		if wait > remaining {
 			wait = remaining
 		}
@@ -451,12 +487,22 @@ func (c *Client) Search(ctx context.Context, q *search.SearchQuery) (*search.Sea
 }
 
 // Scrape submits a single-URL crawl job and polls until it completes,
-// mapping the result to a Document. Formats are validated but otherwise not
-// forwarded: the server always returns the full result (markdown, html,
-// links) and screenshot output has no field on search.Document.
+// mapping the result to a Document. Only the projectable formats
+// (markdown, html, links) are accepted: anything else (e.g. "screenshot",
+// which has no field on search.Document) is rejected with an
+// ErrInvalidRequest-wrapped error before any I/O. Accepted formats are
+// otherwise not forwarded: the server always returns the full result
+// (markdown, html, links).
 func (c *Client) Scrape(ctx context.Context, r *search.ScrapeRequest) (*search.Document, error) {
 	if err := r.Validate(); err != nil {
 		return nil, fmt.Errorf("crawl4ai: scrape: %w", err)
+	}
+	for _, f := range r.Formats {
+		switch f {
+		case "markdown", "html", "links":
+		default:
+			return nil, fmt.Errorf("crawl4ai: scrape: %w: unsupported format %q", search.ErrInvalidRequest, f)
+		}
 	}
 	taskID, err := c.submitJob(ctx, []string{r.URL}, nil)
 	if err != nil {

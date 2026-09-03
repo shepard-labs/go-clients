@@ -349,6 +349,34 @@ func TestAnswerReturnsString(t *testing.T) {
 	}
 }
 
+func TestAnswerNullReturnsEmpty(t *testing.T) {
+	c := newClient(func(r *http.Request) (*http.Response, error) {
+		return jsonResp(http.StatusOK, `{"answer":null}`, nil), nil
+	}, nil)
+
+	ans, err := c.Answer(context.Background(), "what color is the sky?")
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if ans != "" {
+		t.Fatalf("answer = %q, want empty string for null answer", ans)
+	}
+}
+
+func TestAnswerStructuredObjectReturnsCompactJSON(t *testing.T) {
+	c := newClient(func(r *http.Request) (*http.Response, error) {
+		return jsonResp(http.StatusOK, `{"answer": {"key": "v", "n": 1}}`, nil), nil
+	}, nil)
+
+	ans, err := c.Answer(context.Background(), "structured?")
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if ans != `{"key":"v","n":1}` {
+		t.Fatalf("answer = %q, want compact JSON", ans)
+	}
+}
+
 func TestAnswerBlankQueryMakesNoHTTPCall(t *testing.T) {
 	var calls int64
 	c := newClient(func(r *http.Request) (*http.Response, error) {
