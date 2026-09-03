@@ -67,13 +67,6 @@ type RunOptions struct {
 	CrawlerConfig map[string]any
 }
 
-// validate reports whether the options are safe to submit. A nil receiver
-// is valid (no overrides).
-func (o *RunOptions) validate() error {
-	_, _, err := o.marshalValidated()
-	return err
-}
-
 // marshalValidated validates both config maps and returns their compact
 // JSON encodings (nil per omitted map) for reuse by the caller: one marshal
 // per map, no double cost. A nil receiver returns (nil, nil, nil).
