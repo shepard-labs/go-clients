@@ -111,6 +111,37 @@ operations (Firecrawl Map and crawl-job handles, Exa Answer, Crawl4AI job
 handles and `VerifyAuth`) are methods on the concrete clients and reachable
 via a type assertion.
 
+### Provider-specific options
+
+Options live on the concrete clients (`search.Client` unchanged) — reach them by type assertion:
+```go
+fc, ok := firecrawl.New(apiKey, logger).(*firecrawl.Client)
+```
+
+Firecrawl scrape options:
+```go
+main, ms := true, 15000
+doc, err := fc.ScrapeWithOptions(ctx, req, &firecrawl.ScrapeOptions{
+    OnlyMainContent: &main, Timeout: &ms,
+    Location:        &firecrawl.ScrapeLocation{Country: "US"},
+})
+```
+
+Exa search options (`ScrapeOptions` covers text/livecrawl/subpages via `ScrapeWithOptions`):
+```go
+xc, _ := exa.New(apiKey, logger).(*exa.Client)
+page, err := xc.SearchWithOptions(ctx, q, &exa.SearchOptions{Type: "neural", IncludeDomains: []string{"example.com"}})
+```
+
+Crawl4AI run config (`ScrapeWithOptions` takes the same `RunOptions`):
+```go
+cc, _ := crawl4ai.New(url, logger).(*crawl4ai.Client)
+crawled, err := cc.CrawlWithOptions(ctx, req, &crawl4ai.RunOptions{CrawlerConfig: map[string]any{"only_text": true}})
+```
+
+Scalar fields are pointers (nil = unset); nil options behaves exactly like the plain method.
+Bad options fail before any HTTP: `search.ErrInvalidRequest` (Exa search: `search.ErrInvalidQuery`).
+
 Credentials bind at construction. Caller-supplied URLs are fetched by
 third-party infrastructure or the self-hosted crawler — keep Crawl4AI off
 internal networks. Responses are capped at `search.MaxResponseBytes`.
