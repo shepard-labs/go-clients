@@ -107,7 +107,8 @@ type ScrapeOptions struct {
 
 // validate reports whether the options are well-formed. A nil receiver is
 // valid. It performs no I/O by caller contract; every failure wraps
-// search.ErrInvalidRequest.
+// search.ErrInvalidRequest. IncludeTags, ExcludeTags, and
+// Location.Languages are each capped at 100 entries.
 func (o *ScrapeOptions) validate() error {
 	if o == nil {
 		return nil
@@ -136,6 +137,12 @@ func (o *ScrapeOptions) validate() error {
 			return fmt.Errorf("firecrawl: maxAge requires storeInCache: %w", search.ErrInvalidRequest)
 		}
 	}
+	if len(o.IncludeTags) > maxScrapeListEntries {
+		return fmt.Errorf("firecrawl: invalid includeTags (at most %d entries): %w", maxScrapeListEntries, search.ErrInvalidRequest)
+	}
+	if len(o.ExcludeTags) > maxScrapeListEntries {
+		return fmt.Errorf("firecrawl: invalid excludeTags (at most %d entries): %w", maxScrapeListEntries, search.ErrInvalidRequest)
+	}
 	for i, t := range o.IncludeTags {
 		if strings.TrimSpace(t) == "" || len(t) >= 128 {
 			return fmt.Errorf("firecrawl: invalid includeTags[%d] (must be non-blank, <128 chars): %w", i, search.ErrInvalidRequest)
@@ -149,6 +156,9 @@ func (o *ScrapeOptions) validate() error {
 	if err := o.Location.validate(); err != nil {
 		return err
 	}
+	if len(o.Headers) > maxScrapeListEntries {
+		return fmt.Errorf("firecrawl: invalid headers (at most %d entries): %w", maxScrapeListEntries, search.ErrInvalidRequest)
+	}
 	if _, err := o.canonicalHeaders(); err != nil {
 		return err
 	}
@@ -158,7 +168,8 @@ func (o *ScrapeOptions) validate() error {
 // validate reports whether the location is well-formed. A nil receiver, or
 // one with an empty Country and no Languages (omitted at dispatch), is
 // valid. Languages without a Country is rejected; a present Country must
-// normalize (Upper(TrimSpace)) to 2 ASCII letters.
+// normalize (Upper(TrimSpace)) to 2 ASCII letters. Languages holds at most
+// 100 entries, each non-blank and under 128 characters.
 func (l *ScrapeLocation) validate() error {
 	if l == nil {
 		return nil
@@ -172,6 +183,14 @@ func (l *ScrapeLocation) validate() error {
 	}
 	if !validCountryCode(country) {
 		return fmt.Errorf("firecrawl: invalid location country %q (must be 2 ASCII letters): %w", l.Country, search.ErrInvalidRequest)
+	}
+	if len(l.Languages) > maxScrapeListEntries {
+		return fmt.Errorf("firecrawl: invalid location languages (at most %d entries): %w", maxScrapeListEntries, search.ErrInvalidRequest)
+	}
+	for i, lang := range l.Languages {
+		if strings.TrimSpace(lang) == "" || len(lang) >= 128 {
+			return fmt.Errorf("firecrawl: invalid location languages[%d] (must be non-blank, <128 chars): %w", i, search.ErrInvalidRequest)
+		}
 	}
 	return nil
 }
@@ -205,9 +224,14 @@ var deniedScrapeHeaders = map[string]struct{}{
 // len(key)+len(value) over canonicalized keys. The cap is exclusive.
 const maxScrapeHeadersBytes = 8 * 1024
 
+// maxScrapeListEntries caps IncludeTags, ExcludeTags, and
+// ScrapeLocation.Languages at 100 entries each.
+const maxScrapeListEntries = 100
+
 // canonicalHeaders returns Headers with keys canonicalized via
 // http.CanonicalHeaderKey (nil when empty), rejecting blank names,
-// deny-listed names, canonicalization collisions, and totals >= 8KB.
+// deny-listed names, canonicalization collisions, values containing '\r' or
+// '\n', and totals >= 8KB.
 func (o *ScrapeOptions) canonicalHeaders() (map[string]string, error) {
 	if len(o.Headers) == 0 {
 		return nil, nil
@@ -219,11 +243,17 @@ func (o *ScrapeOptions) canonicalHeaders() (map[string]string, error) {
 		if strings.TrimSpace(ck) == "" {
 			return nil, fmt.Errorf("firecrawl: invalid header name %q: %w", k, search.ErrInvalidRequest)
 		}
+		if strings.ContainsAny(k, "\r\n") || strings.ContainsAny(ck, "\r\n") {
+			return nil, fmt.Errorf("firecrawl: invalid header name %q: %w", k, search.ErrInvalidRequest)
+		}
 		if _, denied := deniedScrapeHeaders[ck]; denied {
 			return nil, fmt.Errorf("firecrawl: forbidden header %q: %w", k, search.ErrInvalidRequest)
 		}
 		if _, dup := out[ck]; dup {
 			return nil, fmt.Errorf("firecrawl: duplicate header %q after canonicalization: %w", ck, search.ErrInvalidRequest)
+		}
+		if strings.ContainsAny(v, "\r\n") {
+			return nil, fmt.Errorf("firecrawl: invalid header value for %q: %w", k, search.ErrInvalidRequest)
 		}
 		out[ck] = v
 		total += len(ck) + len(v)
@@ -272,10 +302,18 @@ func (o *ScrapeOptions) applyTo(payload map[string]any) map[string]string {
 		payload["maxAge"] = *o.MaxAge
 	}
 	if len(o.IncludeTags) > 0 {
-		payload["includeTags"] = o.IncludeTags
+		trimmed := make([]string, len(o.IncludeTags))
+		for i, t := range o.IncludeTags {
+			trimmed[i] = strings.TrimSpace(t)
+		}
+		payload["includeTags"] = trimmed
 	}
 	if len(o.ExcludeTags) > 0 {
-		payload["excludeTags"] = o.ExcludeTags
+		trimmed := make([]string, len(o.ExcludeTags))
+		for i, t := range o.ExcludeTags {
+			trimmed[i] = strings.TrimSpace(t)
+		}
+		payload["excludeTags"] = trimmed
 	}
 	if o.Location != nil {
 		if loc := o.Location.payload(); loc != nil {
@@ -311,7 +349,11 @@ func (l *ScrapeLocation) payload() map[string]any {
 		m["country"] = country
 	}
 	if len(l.Languages) > 0 {
-		m["languages"] = l.Languages
+		trimmed := make([]string, len(l.Languages))
+		for i, lang := range l.Languages {
+			trimmed[i] = strings.TrimSpace(lang)
+		}
+		m["languages"] = trimmed
 	}
 	return m
 }

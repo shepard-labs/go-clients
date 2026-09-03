@@ -153,7 +153,7 @@ func (o *ScrapeOptions) validate() error {
 	if o.Subpages != nil && (*o.Subpages < 1 || *o.Subpages > maxSubpages) {
 		return fmt.Errorf("exa: invalid scrape options: subpages must be 1..%d, got %d: %w", maxSubpages, *o.Subpages, search.ErrInvalidRequest)
 	}
-	if o.SubpageTarget != "" && o.Subpages == nil {
+	if strings.TrimSpace(o.SubpageTarget) != "" && o.Subpages == nil {
 		return fmt.Errorf("exa: invalid scrape options: subpageTarget requires subpages: %w", search.ErrInvalidRequest)
 	}
 	return nil

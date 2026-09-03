@@ -212,6 +212,20 @@ func TestScrapeWithOptionsExplicitZeroWaitFor(t *testing.T) {
 
 func TestScrapeWithOptionsValidation(t *testing.T) {
 	big := strings.Repeat("v", 8*1024)
+	longTag := strings.Repeat("t", 128)
+	longLang := strings.Repeat("l", 128)
+	manyTags := make([]string, 101)
+	for i := range manyTags {
+		manyTags[i] = "tag"
+	}
+	manyLangs := make([]string, 101)
+	for i := range manyLangs {
+		manyLangs[i] = "en"
+	}
+	manyHeaders := make(map[string]string, 101)
+	for i := 0; i < 101; i++ {
+		manyHeaders["X-Header-"+strings.Repeat("a", i%10)+strings.Repeat("b", i/10)] = "v"
+	}
 	tests := []struct {
 		name string
 		opts *ScrapeOptions
@@ -223,11 +237,21 @@ func TestScrapeWithOptionsValidation(t *testing.T) {
 		{"negative maxAge", &ScrapeOptions{StoreInCache: optBool(true), MaxAge: optInt(-1)}},
 		{"denied authorization header", &ScrapeOptions{Headers: map[string]string{"Authorization": "x"}}},
 		{"denied header lowercase", &ScrapeOptions{Headers: map[string]string{"authorization": "x"}}},
+		{"header value CRLF", &ScrapeOptions{Headers: map[string]string{"X-Custom": "a\r\nb"}}},
+		{"header name CRLF", &ScrapeOptions{Headers: map[string]string{"X-Bad\r\nInjected": "v"}}},
 		{"oversize headers", &ScrapeOptions{Headers: map[string]string{"X-Big": big}}},
+		{"too many headers", &ScrapeOptions{Headers: manyHeaders}},
 		{"bad country", &ScrapeOptions{Location: &ScrapeLocation{Country: "USA"}}},
 		{"languages without country", &ScrapeOptions{Location: &ScrapeLocation{Languages: []string{"en"}}}},
+		{"blank language", &ScrapeOptions{Location: &ScrapeLocation{Country: "US", Languages: []string{"  "}}}},
+		{"oversize language", &ScrapeOptions{Location: &ScrapeLocation{Country: "US", Languages: []string{longLang}}}},
+		{"too many languages", &ScrapeOptions{Location: &ScrapeLocation{Country: "US", Languages: manyLangs}}},
 		{"blank include tag", &ScrapeOptions{IncludeTags: []string{""}}},
+		{"oversize include tag", &ScrapeOptions{IncludeTags: []string{longTag}}},
+		{"too many include tags", &ScrapeOptions{IncludeTags: manyTags}},
 		{"blank exclude tag", &ScrapeOptions{ExcludeTags: []string{"  "}}},
+		{"oversize exclude tag", &ScrapeOptions{ExcludeTags: []string{longTag}}},
+		{"too many exclude tags", &ScrapeOptions{ExcludeTags: manyTags}},
 		{"timeout zero", &ScrapeOptions{Timeout: optInt(0)}},
 		{"timeout too large", &ScrapeOptions{Timeout: optInt(600001)}},
 		{"waitFor negative", &ScrapeOptions{WaitFor: optInt(-1)}},
@@ -249,6 +273,33 @@ func TestScrapeWithOptionsValidation(t *testing.T) {
 				t.Fatalf("expected 0 HTTP calls, got %d", calls.Load())
 			}
 		})
+	}
+}
+
+func TestScrapeWithOptionsPaddedEntriesTrimmed(t *testing.T) {
+	var body map[string]any
+	c, _ := stubClient(rtFunc(func(r *http.Request) (*http.Response, error) {
+		body = decodeBody(t, r)
+		return resp(http.StatusOK, `{"success":true,"data":{"url":"https://example.com","markdown":"m"}}`, nil), nil
+	}))
+	opts := &ScrapeOptions{
+		IncludeTags: []string{"  x "},
+		Location:    &ScrapeLocation{Country: "us", Languages: []string{"  en  "}},
+	}
+	if _, err := c.ScrapeWithOptions(context.Background(), &search.ScrapeRequest{URL: "https://example.com"}, opts); err != nil {
+		t.Fatalf("ScrapeWithOptions failed: %v", err)
+	}
+	tags, ok := body["includeTags"].([]any)
+	if !ok || len(tags) != 1 || tags[0] != "x" {
+		t.Fatalf("includeTags = %v, want [x]", body["includeTags"])
+	}
+	loc, ok := body["location"].(map[string]any)
+	if !ok {
+		t.Fatalf("location = %v, want it sent", body["location"])
+	}
+	langs, ok := loc["languages"].([]any)
+	if !ok || len(langs) != 1 || langs[0] != "en" {
+		t.Fatalf("location.languages = %v, want [en]", loc["languages"])
 	}
 }
 

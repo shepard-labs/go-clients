@@ -366,8 +366,8 @@ func (c *Client) SearchWithOptions(ctx context.Context, q *search.SearchQuery, o
 		if opts.Type != "" {
 			body["type"] = opts.Type
 		}
-		if opts.Category != "" {
-			body["category"] = opts.Category
+		if strings.TrimSpace(opts.Category) != "" {
+			body["category"] = strings.TrimSpace(opts.Category)
 		}
 		if include, err := normalizeDomains(opts.IncludeDomains); err == nil && len(include) > 0 {
 			body["includeDomains"] = include
@@ -465,8 +465,8 @@ func (c *Client) ScrapeWithOptions(ctx context.Context, r *search.ScrapeRequest,
 		if opts.Subpages != nil {
 			body["subpages"] = *opts.Subpages
 		}
-		if opts.SubpageTarget != "" {
-			body["subpageTarget"] = opts.SubpageTarget
+		if strings.TrimSpace(opts.SubpageTarget) != "" {
+			body["subpageTarget"] = strings.TrimSpace(opts.SubpageTarget)
 		}
 	}
 	bodyBytes, err := json.Marshal(body)

@@ -342,6 +342,81 @@ func TestScrapeWithOptionsValidation(t *testing.T) {
 // The Answer path takes no options struct, so there is no Answer-path options
 // validation to cover here (blank-query rejection is covered in exa_test.go).
 
+func TestSearchWithOptionsBlankCategoryOmitted(t *testing.T) {
+	var calls int64
+	body := captureBody(t, &calls, searchFixture, func(c *Client) error {
+		_, err := c.SearchWithOptions(context.Background(), &search.SearchQuery{Query: "golang", NumResults: 3}, &SearchOptions{Category: "  "})
+		return err
+	})
+	if _, ok := body["category"]; ok {
+		t.Fatalf("body[%q] = %v, want it omitted", "category", body["category"])
+	}
+	if got := atomic.LoadInt64(&calls); got != 1 {
+		t.Fatalf("calls = %d, want 1 (blank category must not fail validation)", got)
+	}
+
+	// Non-blank values still sent.
+	body = captureBody(t, nil, searchFixture, func(c *Client) error {
+		_, err := c.SearchWithOptions(context.Background(), &search.SearchQuery{Query: "golang", NumResults: 3}, &SearchOptions{Category: "news"})
+		return err
+	})
+	if body["category"] != "news" {
+		t.Fatalf("category = %v, want news", body["category"])
+	}
+}
+
+func TestSearchWithOptionsCategoryPaddedTrimmed(t *testing.T) {
+	body := captureBody(t, nil, searchFixture, func(c *Client) error {
+		_, err := c.SearchWithOptions(context.Background(), &search.SearchQuery{Query: "golang", NumResults: 3}, &SearchOptions{Category: "  news  "})
+		return err
+	})
+	if body["category"] != "news" {
+		t.Fatalf("category = %v, want news", body["category"])
+	}
+}
+
+func TestScrapeWithOptionsBlankSubpageTargetOmitted(t *testing.T) {
+	scrapeOK := `{"results":[{"url":"https://a.example/1","text":"# hello"}]}`
+	subpages := 2
+	for _, opts := range []*ScrapeOptions{
+		{SubpageTarget: "   "},
+		{Subpages: &subpages, SubpageTarget: "   "},
+	} {
+		var calls int64
+		body := captureBody(t, &calls, scrapeOK, func(c *Client) error {
+			_, err := c.ScrapeWithOptions(context.Background(), &search.ScrapeRequest{URL: "https://a.example/1"}, opts)
+			return err
+		})
+		if _, ok := body["subpageTarget"]; ok {
+			t.Fatalf("body[%q] = %v, want it omitted for opts %+v", "subpageTarget", body["subpageTarget"], opts)
+		}
+		if got := atomic.LoadInt64(&calls); got != 1 {
+			t.Fatalf("calls = %d, want 1 (blank subpageTarget must not fail validation)", got)
+		}
+	}
+
+	// Non-blank values still sent.
+	body := captureBody(t, nil, scrapeOK, func(c *Client) error {
+		_, err := c.ScrapeWithOptions(context.Background(), &search.ScrapeRequest{URL: "https://a.example/1"}, &ScrapeOptions{Subpages: &subpages, SubpageTarget: "pricing"})
+		return err
+	})
+	if body["subpageTarget"] != "pricing" {
+		t.Fatalf("subpageTarget = %v, want pricing", body["subpageTarget"])
+	}
+}
+
+func TestScrapeWithOptionsSubpageTargetPaddedTrimmed(t *testing.T) {
+	scrapeOK := `{"results":[{"url":"https://a.example/1","text":"# hello"}]}`
+	subpages := 2
+	body := captureBody(t, nil, scrapeOK, func(c *Client) error {
+		_, err := c.ScrapeWithOptions(context.Background(), &search.ScrapeRequest{URL: "https://a.example/1"}, &ScrapeOptions{Subpages: &subpages, SubpageTarget: "  pricing  "})
+		return err
+	})
+	if body["subpageTarget"] != "pricing" {
+		t.Fatalf("subpageTarget = %v, want pricing", body["subpageTarget"])
+	}
+}
+
 func TestScrapeWithOptionsTextTriState(t *testing.T) {
 	scrapeOK := `{"results":[{"url":"https://a.example/1","text":"# hello"}]}`
 	tests := []struct {
