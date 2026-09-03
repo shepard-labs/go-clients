@@ -6,6 +6,7 @@ updates:
       - "/storage"
       - "/kms"
       - "/twitter"
+      - "/search"
       - "/examples"
     schedule:
       interval: "weekly"

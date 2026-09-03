@@ -19,6 +19,7 @@ SDKs into its build graph.
 | `storage` | `github.com/shepard-labs/go-clients/storage` | GCS (`/gcs`), Cloudflare R2 (`/r2`) |
 | `kms` | `github.com/shepard-labs/go-clients/kms` | Google Cloud KMS |
 | `twitter` | `github.com/shepard-labs/go-clients/twitter` | X (Twitter) API v2 |
+| `search` | `github.com/shepard-labs/go-clients/search` | Firecrawl (`/firecrawl`), Exa (`/exa`), Crawl4AI (`/crawl4ai`) |
 
 Each module exposes a single capability interface; the provider subpackages
 implement it and bind their credentials/configuration at construction.
@@ -81,6 +82,38 @@ value. `Download` buffers the whole object in memory (bounded by the
 configured max-download, `storage.DefaultMaxDownloadBytes` by default), while
 `DownloadReader` streams it uncapped — the caller owns closing and bounding
 the stream.
+
+## search
+
+```go
+import (
+    "github.com/shepard-labs/go-clients/search"
+    "github.com/shepard-labs/go-clients/search/firecrawl"
+    "github.com/shepard-labs/go-clients/search/exa"
+    "github.com/shepard-labs/go-clients/search/crawl4ai"
+)
+
+var s search.Client
+s = firecrawl.New(apiKey, logger)                                        // Bearer, api.firecrawl.dev, /v2/*
+s = exa.New(apiKey, logger)                                              // x-api-key, api.exa.ai
+s = crawl4ai.New("http://localhost:11235", logger, crawl4ai.WithToken(token)) // self-hosted 0.9.x
+
+page, err := s.Search(ctx, &search.SearchQuery{Query: "golang http client", NumResults: 5})
+doc, err := s.Scrape(ctx, &search.ScrapeRequest{URL: "https://example.com"})
+crawled, err := s.Crawl(ctx, &search.CrawlRequest{StartURL: "https://example.com", MaxPages: 10})
+err = s.Close()
+```
+
+The `Client` interface covers `Search`, `Scrape`, and `Crawl`. Not every
+provider implements every method: Exa `Crawl` and Crawl4AI `Search` return
+`search.ErrNotSupported` — probe with `errors.Is`. Provider-specific
+operations (Firecrawl Map and crawl-job handles, Exa Answer, Crawl4AI job
+handles and `VerifyAuth`) are methods on the concrete clients and reachable
+via a type assertion.
+
+Credentials bind at construction. Caller-supplied URLs are fetched by
+third-party infrastructure or the self-hosted crawler — keep Crawl4AI off
+internal networks. Responses are capped at `search.MaxResponseBytes`.
 
 ## kms
 

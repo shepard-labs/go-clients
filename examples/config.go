@@ -44,6 +44,11 @@ type config struct {
 	GCS             gcsConfig
 	R2              r2Config
 
+	SearchProvider string // "firecrawl" | "exa" | "crawl4ai"
+	Firecrawl      firecrawlConfig
+	Exa            exaConfig
+	Crawl4AI       crawl4aiConfig
+
 	KMS kmsConfig
 
 	// MaxRequestBytes caps the size of an incoming request body.
@@ -77,6 +82,19 @@ type kmsConfig struct {
 	KeyName        string
 }
 
+type firecrawlConfig struct {
+	APIKey string
+}
+
+type exaConfig struct {
+	APIKey string
+}
+
+type crawl4aiConfig struct {
+	BaseURL string
+	Token   string
+}
+
 const defaultMaxRequestBytes = 10 << 20 // 10 MiB
 
 // loadConfig reads configuration from the environment, returning an error that
@@ -98,6 +116,7 @@ func loadConfig() (*config, error) {
 		LogLevel:        getenvDefault("LOG_LEVEL", "info"),
 		EmailProvider:   strings.ToLower(getenvDefault("EMAIL_PROVIDER", "postmark")),
 		StorageProvider: strings.ToLower(getenvDefault("STORAGE_PROVIDER", "gcs")),
+		SearchProvider:  strings.ToLower(getenvDefault("SEARCH_PROVIDER", "firecrawl")),
 		MaxRequestBytes: defaultMaxRequestBytes,
 		KMS: kmsConfig{
 			ServiceAccount: os.Getenv("KMS_SERVICE_ACCOUNT"),
@@ -133,6 +152,20 @@ func loadConfig() (*config, error) {
 		}
 	default:
 		return nil, fmt.Errorf("invalid STORAGE_PROVIDER %q (want gcs or r2)", c.StorageProvider)
+	}
+
+	switch c.SearchProvider {
+	case "firecrawl":
+		c.Firecrawl = firecrawlConfig{APIKey: req("FIRECRAWL_API_KEY")}
+	case "exa":
+		c.Exa = exaConfig{APIKey: req("EXA_API_KEY")}
+	case "crawl4ai":
+		c.Crawl4AI = crawl4aiConfig{
+			BaseURL: getenvDefault("CRAWL4AI_BASE_URL", "http://localhost:11235"),
+			Token:   req("CRAWL4AI_TOKEN"),
+		}
+	default:
+		return nil, fmt.Errorf("invalid SEARCH_PROVIDER %q (want firecrawl, exa or crawl4ai)", c.SearchProvider)
 	}
 
 	if len(missing) > 0 {

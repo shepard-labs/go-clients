@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
 	"github.com/shepard-labs/go-clients/email"
 	"github.com/shepard-labs/go-clients/kms"
+	"github.com/shepard-labs/go-clients/search"
 	"github.com/shepard-labs/go-clients/storage"
 )
 
@@ -20,6 +23,7 @@ type server struct {
 	sender    email.Sender
 	store     storage.Storage
 	encryptor kms.Encryptor
+	searcher  search.Client
 }
 
 // abortError writes a generic JSON error and stops the handler chain. The
@@ -174,4 +178,111 @@ func (s *server) decrypt(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"plaintext": plaintext})
+}
+
+// --- search ---
+
+type searchQueryRequest struct {
+	Query      string `json:"query"`
+	NumResults int    `json:"num_results"`
+}
+
+func (s *server) searchQuery(c *gin.Context) {
+	var req searchQueryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		abortError(c, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.NumResults > 20 {
+		abortError(c, http.StatusBadRequest, "num_results too large")
+		return
+	}
+
+	page, err := s.searcher.Search(c.Request.Context(), &search.SearchQuery{
+		Query:      req.Query,
+		NumResults: req.NumResults,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, search.ErrInvalidQuery):
+			abortError(c, http.StatusBadRequest, "invalid search query")
+		case errors.Is(err, search.ErrNotSupported):
+			abortError(c, http.StatusNotImplemented, "search not supported by provider")
+		default:
+			s.logger.Error("search query failed", zap.Error(err))
+			abortError(c, http.StatusBadGateway, "search query failed")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, page)
+}
+
+type searchScrapeRequest struct {
+	URL string `json:"url"`
+}
+
+func (s *server) searchScrape(c *gin.Context) {
+	var req searchScrapeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		abortError(c, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	doc, err := s.searcher.Scrape(c.Request.Context(), &search.ScrapeRequest{URL: req.URL})
+	if err != nil {
+		if errors.Is(err, search.ErrInvalidRequest) {
+			abortError(c, http.StatusBadRequest, "invalid scrape request")
+			return
+		}
+		s.logger.Error("search scrape failed", zap.Error(err))
+		abortError(c, http.StatusBadGateway, "search scrape failed")
+		return
+	}
+
+	c.JSON(http.StatusOK, doc)
+}
+
+type searchCrawlRequest struct {
+	StartURL string `json:"start_url"`
+	MaxPages int    `json:"max_pages"`
+}
+
+func (s *server) searchCrawl(c *gin.Context) {
+	var req searchCrawlRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		abortError(c, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.MaxPages > 50 {
+		abortError(c, http.StatusBadRequest, "max_pages too large")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 25*time.Second)
+	defer cancel()
+
+	page, err := s.searcher.Crawl(ctx, &search.CrawlRequest{
+		StartURL: req.StartURL,
+		MaxPages: req.MaxPages,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, search.ErrInvalidRequest):
+			abortError(c, http.StatusBadRequest, "invalid crawl request")
+		case errors.Is(err, search.ErrNotSupported):
+			abortError(c, http.StatusNotImplemented, "crawl not supported by provider")
+		case errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil:
+			s.logger.Error("search crawl timed out", zap.Error(err))
+			abortError(c, http.StatusGatewayTimeout, "search crawl timed out")
+		default:
+			s.logger.Error("search crawl failed", zap.Error(err))
+			abortError(c, http.StatusBadGateway, "search crawl failed")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, page)
 }

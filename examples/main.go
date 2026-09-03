@@ -16,6 +16,10 @@ import (
 	"github.com/shepard-labs/go-clients/email/postmark"
 	"github.com/shepard-labs/go-clients/email/ses"
 	"github.com/shepard-labs/go-clients/kms"
+	"github.com/shepard-labs/go-clients/search"
+	"github.com/shepard-labs/go-clients/search/crawl4ai"
+	"github.com/shepard-labs/go-clients/search/exa"
+	"github.com/shepard-labs/go-clients/search/firecrawl"
 	"github.com/shepard-labs/go-clients/storage"
 	"github.com/shepard-labs/go-clients/storage/gcs"
 	"github.com/shepard-labs/go-clients/storage/r2"
@@ -54,7 +58,13 @@ func main() {
 	}
 	defer func() { _ = encryptor.Close() }()
 
-	srv := &server{logger: logger, sender: sender, store: store, encryptor: encryptor}
+	searcher, err := buildSearcher(cfg, logger)
+	if err != nil {
+		logger.Fatal("failed to build search client", zap.Error(err))
+	}
+	defer func() { _ = searcher.Close() }()
+
+	srv := &server{logger: logger, sender: sender, store: store, encryptor: encryptor, searcher: searcher}
 	router := buildRouter(cfg, srv)
 
 	httpServer := &http.Server{
@@ -70,7 +80,8 @@ func main() {
 	go func() {
 		logger.Info("listening", zap.String("addr", cfg.Addr),
 			zap.String("email_provider", cfg.EmailProvider),
-			zap.String("storage_provider", cfg.StorageProvider))
+			zap.String("storage_provider", cfg.StorageProvider),
+			zap.String("search_provider", cfg.SearchProvider))
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Fatal("server error", zap.Error(err))
 		}
@@ -115,6 +126,19 @@ func buildStorage(ctx context.Context, cfg *config, logger *zap.Logger) (storage
 	}
 }
 
+func buildSearcher(cfg *config, logger *zap.Logger) (search.Client, error) {
+	switch cfg.SearchProvider {
+	case "firecrawl":
+		return firecrawl.New(cfg.Firecrawl.APIKey, logger), nil
+	case "exa":
+		return exa.New(cfg.Exa.APIKey, logger), nil
+	case "crawl4ai":
+		return crawl4ai.New(cfg.Crawl4AI.BaseURL, logger, crawl4ai.WithToken(cfg.Crawl4AI.Token)), nil
+	default:
+		return nil, errors.New("unknown search provider")
+	}
+}
+
 func buildRouter(cfg *config, srv *server) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -135,6 +159,9 @@ func buildRouter(cfg *config, srv *server) *gin.Engine {
 		api.GET("/storage/download", srv.download)
 		api.POST("/kms/encrypt", srv.encrypt)
 		api.POST("/kms/decrypt", srv.decrypt)
+		api.POST("/search/query", srv.searchQuery)
+		api.POST("/search/scrape", srv.searchScrape)
+		api.POST("/search/crawl", srv.searchCrawl)
 	}
 
 	return r

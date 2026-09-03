@@ -6,6 +6,7 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/shepard-labs/go-clients/email v0.0.0
 	github.com/shepard-labs/go-clients/kms v0.0.0
+	github.com/shepard-labs/go-clients/search v0.0.0
 	github.com/shepard-labs/go-clients/storage v0.0.0
 	go.uber.org/zap v1.28.0
 )
@@ -109,5 +110,6 @@ require (
 replace (
 	github.com/shepard-labs/go-clients/email => ../email
 	github.com/shepard-labs/go-clients/kms => ../kms
+	github.com/shepard-labs/go-clients/search => ../search
 	github.com/shepard-labs/go-clients/storage => ../storage
 )
