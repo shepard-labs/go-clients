@@ -263,14 +263,20 @@ func retryAfterDelay(header string, fallback time.Duration) time.Duration {
 	return fallback
 }
 
-// doRequest performs an HTTP request with retry logic against the Firecrawl
-// API. It marshals payload once so a fresh reader is built per attempt;
+// doRequest performs an HTTP request with no custom headers.
+func (c *Client) doRequest(ctx context.Context, method, path string, payload any) ([]byte, error) {
+	return c.doRequestWithHeaders(ctx, method, path, payload, nil)
+}
+
+// doRequestWithHeaders performs an HTTP request with retry logic against the
+// Firecrawl API. It marshals payload once so a fresh reader is built per attempt;
 // retries therefore resend the full body. Transport errors back off
 // 200ms*attempt, 5xx backs off 500ms*attempt, and 429 honors Retry-After
 // (fallback 500ms*attempt). Other 4xx (including 402 billing) return an
 // *APIError immediately and are never retried. A 2xx response carrying
-// success:false is likewise an *APIError.
-func (c *Client) doRequest(ctx context.Context, method, path string, payload any) ([]byte, error) {
+// success:false is likewise an *APIError. headers holds custom HTTP headers
+// applied before Authorization (which therefore always wins).
+func (c *Client) doRequestWithHeaders(ctx context.Context, method, path string, payload any, headers map[string]string) ([]byte, error) {
 	var bodyBytes []byte
 	if payload != nil {
 		b, err := json.Marshal(payload)
@@ -293,6 +299,11 @@ func (c *Client) doRequest(ctx context.Context, method, path string, payload any
 			return nil, fmt.Errorf("firecrawl: failed to create request: %w", err)
 		}
 		req.Header.Set("Accept", "application/json")
+		// Custom headers go first so the bearer credential set next can
+		// never be overridden.
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 		if bodyBytes != nil {
 			req.Header.Set("Content-Type", "application/json")
@@ -522,9 +533,33 @@ func flattenMetadata(in map[string]any) map[string]string {
 }
 
 // Scrape scrapes a single page, mapping the v2 document onto a
-// search.Document.
+// search.Document. It delegates to ScrapeWithOptions with nil options.
 func (c *Client) Scrape(ctx context.Context, r *search.ScrapeRequest) (*search.Document, error) {
+	return c.ScrapeWithOptions(ctx, r, nil)
+}
+
+// ScrapeWithOptions scrapes a single page like Scrape, merging opts into
+// the /v2/scrape payload ({url, formats?} plus the set option keys; custom
+// headers travel both in the payload "headers" key and as HTTP headers, set
+// before Authorization so the bearer credential can never be overridden).
+//
+// The prologue runs in documented order: a nil ctx reports
+// search.ErrInvalidRequest, then r.Validate(), then opts.validate() (a nil
+// opts is valid), then checkKey (whose empty-key error is returned
+// unwrapped, as in the other methods). No I/O happens before the prologue
+// passes.
+//
+// Timeout/WaitFor are server-side milliseconds consumed by Firecrawl; the
+// 30s http.Client.Timeout always wins, so a Timeout above ~30s needs a
+// longer client injected via WithHTTPClient.
+func (c *Client) ScrapeWithOptions(ctx context.Context, r *search.ScrapeRequest, opts *ScrapeOptions) (*search.Document, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("firecrawl: %w: context is nil", search.ErrInvalidRequest)
+	}
 	if err := r.Validate(); err != nil {
+		return nil, err
+	}
+	if err := opts.validate(); err != nil {
 		return nil, err
 	}
 	if err := c.checkKey(); err != nil {
@@ -535,7 +570,8 @@ func (c *Client) Scrape(ctx context.Context, r *search.ScrapeRequest) (*search.D
 	if len(r.Formats) > 0 {
 		payload["formats"] = r.Formats
 	}
-	respBody, err := c.doRequest(ctx, http.MethodPost, "/v2/scrape", payload)
+	headers := opts.applyTo(payload)
+	respBody, err := c.doRequestWithHeaders(ctx, http.MethodPost, "/v2/scrape", payload, headers)
 	if err != nil {
 		return nil, err
 	}
