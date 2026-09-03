@@ -337,18 +337,58 @@ type searchResponse struct {
 // Search runs a web search query. Snippet prefers the per-result "text"
 // field, then "summary", then the joined "highlights".
 func (c *Client) Search(ctx context.Context, q *search.SearchQuery) (*search.SearchPage, error) {
+	return c.SearchWithOptions(ctx, q, nil)
+}
+
+// SearchWithOptions runs a web search query with optional parameters. A nil
+// ctx fails on the search-path sentinel before any validation or I/O; a nil
+// opts sends the default body.
+func (c *Client) SearchWithOptions(ctx context.Context, q *search.SearchQuery, opts *SearchOptions) (*search.SearchPage, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("exa: search: %w: nil context", search.ErrInvalidQuery)
+	}
 	if err := q.Validate(); err != nil {
+		return nil, err
+	}
+	if err := opts.validate(); err != nil {
 		return nil, err
 	}
 	if err := c.checkAPIKey(); err != nil {
 		return nil, err
 	}
 
-	bodyBytes, err := json.Marshal(map[string]any{
+	body := map[string]any{
 		"query":      q.Query,
 		"numResults": q.NumResults,
 		"contents":   map[string]any{"text": true},
-	})
+	}
+	if opts != nil {
+		if opts.Type != "" {
+			body["type"] = opts.Type
+		}
+		if opts.Category != "" {
+			body["category"] = opts.Category
+		}
+		if include, err := normalizeDomains(opts.IncludeDomains); err == nil && len(include) > 0 {
+			body["includeDomains"] = include
+		}
+		if exclude, err := normalizeDomains(opts.ExcludeDomains); err == nil && len(exclude) > 0 {
+			body["excludeDomains"] = exclude
+		}
+		if opts.StartPublishedDate != "" {
+			body["startPublishedDate"] = opts.StartPublishedDate
+		}
+		if opts.EndPublishedDate != "" {
+			body["endPublishedDate"] = opts.EndPublishedDate
+		}
+		if opts.Livecrawl != "" {
+			body["livecrawl"] = opts.Livecrawl
+		}
+		if opts.LivecrawlTimeout != nil {
+			body["livecrawlTimeout"] = *opts.LivecrawlTimeout
+		}
+	}
+	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("exa: marshal search request: %w", err)
 	}
@@ -387,17 +427,49 @@ func (c *Client) Search(ctx context.Context, q *search.SearchQuery) (*search.Sea
 // Scrape scrapes a single page via the contents endpoint. The first result's
 // "text" becomes Document.Markdown.
 func (c *Client) Scrape(ctx context.Context, r *search.ScrapeRequest) (*search.Document, error) {
+	return c.ScrapeWithOptions(ctx, r, nil)
+}
+
+// ScrapeWithOptions scrapes a single page via the contents endpoint with
+// optional parameters. A nil ctx fails on the scrape-path sentinel before
+// any validation or I/O; a nil opts sends the default body (text requested).
+func (c *Client) ScrapeWithOptions(ctx context.Context, r *search.ScrapeRequest, opts *ScrapeOptions) (*search.Document, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("exa: scrape: %w: nil context", search.ErrInvalidRequest)
+	}
 	if err := r.Validate(); err != nil {
+		return nil, err
+	}
+	if err := opts.validate(); err != nil {
 		return nil, err
 	}
 	if err := c.checkAPIKey(); err != nil {
 		return nil, err
 	}
 
-	bodyBytes, err := json.Marshal(map[string]any{
+	text := true
+	if opts != nil && opts.Text != nil {
+		text = *opts.Text
+	}
+	body := map[string]any{
 		"urls": []string{r.URL},
-		"text": true,
-	})
+		"text": text,
+	}
+	if opts != nil {
+		if opts.Livecrawl != "" {
+			body["livecrawl"] = opts.Livecrawl
+		}
+		if opts.LivecrawlTimeout != nil {
+			body["livecrawlTimeout"] = *opts.LivecrawlTimeout
+		}
+		if opts.Subpages != nil {
+			body["subpages"] = *opts.Subpages
+		}
+		if opts.SubpageTarget != "" {
+			body["subpageTarget"] = opts.SubpageTarget
+		}
+	}
+	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("exa: marshal scrape request: %w", err)
 	}
