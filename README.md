@@ -20,6 +20,7 @@ SDKs into its build graph.
 | `kms` | `github.com/shepard-labs/go-clients/kms` | Google Cloud KMS |
 | `twitter` | `github.com/shepard-labs/go-clients/twitter` | X (Twitter) API v2 |
 | `search` | `github.com/shepard-labs/go-clients/search` | Firecrawl (`/firecrawl`), Exa (`/exa`), Crawl4AI (`/crawl4ai`) |
+| `github` | `github.com/shepard-labs/go-clients/github` | GitHub App REST API |
 
 Each module exposes a single capability interface; the provider subpackages
 implement it and bind their credentials/configuration at construction.
