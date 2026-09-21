@@ -4,8 +4,8 @@ go 1.26
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.0
-	github.com/aws/aws-sdk-go-v2/credentials v1.20.4
-	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.73.0
+	github.com/aws/aws-sdk-go-v2/credentials v1.20.5
+	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.74.0
 	github.com/aws/smithy-go v1.28.1
 	go.uber.org/zap v1.28.0
 )
