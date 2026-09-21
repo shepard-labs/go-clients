@@ -3,10 +3,10 @@ module github.com/shepard-labs/go-clients/storage
 go 1.26.0
 
 require (
-	cloud.google.com/go/storage v1.67.1
+	cloud.google.com/go/storage v1.68.0
 	github.com/minio/minio-go/v7 v7.3.0
 	go.uber.org/zap v1.28.0
-	google.golang.org/api v0.297.0
+	google.golang.org/api v0.298.0
 )
 
 require (
