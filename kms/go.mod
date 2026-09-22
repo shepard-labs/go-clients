@@ -3,10 +3,10 @@ module github.com/shepard-labs/go-clients/kms
 go 1.26.0
 
 require (
-	cloud.google.com/go/kms v1.33.0
+	cloud.google.com/go/kms v1.34.0
 	github.com/googleapis/gax-go/v2 v2.24.1
 	go.uber.org/zap v1.28.0
-	google.golang.org/api v0.297.0
+	google.golang.org/api v0.298.0
 	google.golang.org/protobuf v1.36.12
 )
 
