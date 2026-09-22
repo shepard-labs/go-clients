@@ -23,6 +23,7 @@ import (
 	"github.com/shepard-labs/go-clients/search/firecrawl"
 	"github.com/shepard-labs/go-clients/storage"
 	"github.com/shepard-labs/go-clients/storage/gcs"
+	"github.com/shepard-labs/go-clients/storage/local"
 	"github.com/shepard-labs/go-clients/storage/r2"
 	"github.com/shepard-labs/go-clients/storage/s3"
 )
@@ -150,6 +151,8 @@ func buildStorage(ctx context.Context, cfg *config, logger *zap.Logger) (storage
 			opts = append(opts, s3.WithEndpoint(cfg.GCSHMAC.Endpoint))
 		}
 		return s3.NewGCSHMAC(cfg.GCSHMAC.AccessKeyID, cfg.GCSHMAC.SecretKey, cfg.GCSHMAC.Bucket, serviceTag, 0, logger, opts...)
+	case "local":
+		return local.New(cfg.Local.Dir, serviceTag, 0, logger)
 	default:
 		return nil, errors.New("unknown storage provider")
 	}

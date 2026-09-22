@@ -40,7 +40,7 @@ type config struct {
 	SES           sesConfig
 	Postmark      postmarkConfig
 
-	StorageProvider string // "gcs" | "r2" | "aws" | "minio" | "b2" | "wasabi" | "gcshmac"
+	StorageProvider string // "gcs" | "r2" | "aws" | "minio" | "b2" | "wasabi" | "gcshmac" | "local"
 	GCS             gcsConfig
 	R2              r2Config
 	AWS             awsConfig
@@ -48,6 +48,7 @@ type config struct {
 	B2              b2Config
 	Wasabi          wasabiConfig
 	GCSHMAC         gcshmacConfig
+	Local           localDirConfig
 
 	SearchProvider string // "firecrawl" | "exa" | "crawl4ai"
 	Firecrawl      firecrawlConfig
@@ -119,6 +120,10 @@ type gcshmacConfig struct {
 	SecretKey   string
 	Bucket      string
 	Endpoint    string // optional override
+}
+
+type localDirConfig struct {
+	Dir string
 }
 
 type kmsConfig struct {
@@ -233,8 +238,12 @@ func loadConfig() (*config, error) {
 			Bucket:      req("GCS_HMAC_BUCKET"),
 			Endpoint:    os.Getenv("GCS_HMAC_ENDPOINT"),
 		}
+	case "local":
+		c.Local = localDirConfig{
+			Dir: req("LOCAL_DIR"),
+		}
 	default:
-		return nil, fmt.Errorf("invalid STORAGE_PROVIDER %q (want gcs, r2, aws, minio, b2, wasabi or gcshmac)", c.StorageProvider)
+		return nil, fmt.Errorf("invalid STORAGE_PROVIDER %q (want gcs, r2, aws, minio, b2, wasabi, gcshmac or local)", c.StorageProvider)
 	}
 
 	switch c.SearchProvider {
