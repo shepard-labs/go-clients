@@ -40,9 +40,14 @@ type config struct {
 	SES           sesConfig
 	Postmark      postmarkConfig
 
-	StorageProvider string // "gcs" | "r2"
+	StorageProvider string // "gcs" | "r2" | "aws" | "minio" | "b2" | "wasabi" | "gcshmac"
 	GCS             gcsConfig
 	R2              r2Config
+	AWS             awsConfig
+	MinIO           minioConfig
+	B2              b2Config
+	Wasabi          wasabiConfig
+	GCSHMAC         gcshmacConfig
 
 	SearchProvider string // "firecrawl" | "exa" | "crawl4ai"
 	Firecrawl      firecrawlConfig
@@ -75,6 +80,45 @@ type r2Config struct {
 	AccessKeyID string
 	SecretKey   string
 	Bucket      string
+}
+
+type awsConfig struct {
+	AccessKeyID string
+	SecretKey   string
+	Region      string
+	Bucket      string
+	Endpoint    string // optional override
+}
+
+type minioConfig struct {
+	Endpoint  string
+	AccessKey string
+	SecretKey string
+	Bucket    string
+	Secure    string // "1"/"true" enables TLS
+}
+
+type b2Config struct {
+	AccessKeyID string
+	SecretKey   string
+	Region      string
+	Bucket      string
+	Endpoint    string // optional override
+}
+
+type wasabiConfig struct {
+	AccessKeyID string
+	SecretKey   string
+	Region      string
+	Bucket      string
+	Endpoint    string // optional override
+}
+
+type gcshmacConfig struct {
+	AccessKeyID string
+	SecretKey   string
+	Bucket      string
+	Endpoint    string // optional override
 }
 
 type kmsConfig struct {
@@ -150,8 +194,47 @@ func loadConfig() (*config, error) {
 			SecretKey:   req("R2_SECRET_KEY"),
 			Bucket:      req("R2_BUCKET"),
 		}
+	case "aws":
+		c.AWS = awsConfig{
+			AccessKeyID: req("AWS_ACCESS_KEY_ID"),
+			SecretKey:   req("AWS_SECRET_ACCESS_KEY"),
+			Region:      req("AWS_REGION"),
+			Bucket:      req("AWS_BUCKET"),
+			Endpoint:    os.Getenv("AWS_ENDPOINT"),
+		}
+	case "minio":
+		c.MinIO = minioConfig{
+			Endpoint:  req("MINIO_ENDPOINT"),
+			AccessKey: req("MINIO_ACCESS_KEY"),
+			SecretKey: req("MINIO_SECRET_KEY"),
+			Bucket:    req("MINIO_BUCKET"),
+			Secure:    os.Getenv("MINIO_SECURE"),
+		}
+	case "b2":
+		c.B2 = b2Config{
+			AccessKeyID: req("B2_ACCESS_KEY_ID"),
+			SecretKey:   req("B2_SECRET_KEY"),
+			Region:      req("B2_REGION"),
+			Bucket:      req("B2_BUCKET"),
+			Endpoint:    os.Getenv("B2_ENDPOINT"),
+		}
+	case "wasabi":
+		c.Wasabi = wasabiConfig{
+			AccessKeyID: req("WASABI_ACCESS_KEY_ID"),
+			SecretKey:   req("WASABI_SECRET_KEY"),
+			Region:      req("WASABI_REGION"),
+			Bucket:      req("WASABI_BUCKET"),
+			Endpoint:    os.Getenv("WASABI_ENDPOINT"),
+		}
+	case "gcshmac":
+		c.GCSHMAC = gcshmacConfig{
+			AccessKeyID: req("GCS_HMAC_ACCESS_KEY"),
+			SecretKey:   req("GCS_HMAC_SECRET_KEY"),
+			Bucket:      req("GCS_HMAC_BUCKET"),
+			Endpoint:    os.Getenv("GCS_HMAC_ENDPOINT"),
+		}
 	default:
-		return nil, fmt.Errorf("invalid STORAGE_PROVIDER %q (want gcs or r2)", c.StorageProvider)
+		return nil, fmt.Errorf("invalid STORAGE_PROVIDER %q (want gcs, r2, aws, minio, b2, wasabi or gcshmac)", c.StorageProvider)
 	}
 
 	switch c.SearchProvider {

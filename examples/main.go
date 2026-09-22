@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/shepard-labs/go-clients/storage"
 	"github.com/shepard-labs/go-clients/storage/gcs"
 	"github.com/shepard-labs/go-clients/storage/r2"
+	"github.com/shepard-labs/go-clients/storage/s3"
 )
 
 const serviceTag = "go-clients-example"
@@ -121,6 +123,33 @@ func buildStorage(ctx context.Context, cfg *config, logger *zap.Logger) (storage
 		return gcs.New(ctx, cfg.GCS.ServiceAccount, cfg.GCS.Bucket, serviceTag, 0, logger)
 	case "r2":
 		return r2.New(cfg.R2.AccountID, cfg.R2.AccessKeyID, cfg.R2.SecretKey, cfg.R2.Bucket, serviceTag, 0, logger)
+	case "aws":
+		var opts []func(*s3.Config)
+		if cfg.AWS.Endpoint != "" {
+			opts = append(opts, s3.WithEndpoint(cfg.AWS.Endpoint))
+		}
+		return s3.NewAWS(cfg.AWS.AccessKeyID, cfg.AWS.SecretKey, cfg.AWS.Region, cfg.AWS.Bucket, serviceTag, 0, logger, opts...)
+	case "minio":
+		secure := cfg.MinIO.Secure == "1" || strings.EqualFold(cfg.MinIO.Secure, "true")
+		return s3.NewMinIO(cfg.MinIO.Endpoint, cfg.MinIO.AccessKey, cfg.MinIO.SecretKey, cfg.MinIO.Bucket, serviceTag, 0, secure, logger)
+	case "b2":
+		var opts []func(*s3.Config)
+		if cfg.B2.Endpoint != "" {
+			opts = append(opts, s3.WithEndpoint(cfg.B2.Endpoint))
+		}
+		return s3.NewB2(cfg.B2.AccessKeyID, cfg.B2.SecretKey, cfg.B2.Region, cfg.B2.Bucket, serviceTag, 0, logger, opts...)
+	case "wasabi":
+		var opts []func(*s3.Config)
+		if cfg.Wasabi.Endpoint != "" {
+			opts = append(opts, s3.WithEndpoint(cfg.Wasabi.Endpoint))
+		}
+		return s3.NewWasabi(cfg.Wasabi.AccessKeyID, cfg.Wasabi.SecretKey, cfg.Wasabi.Region, cfg.Wasabi.Bucket, serviceTag, 0, logger, opts...)
+	case "gcshmac":
+		var opts []func(*s3.Config)
+		if cfg.GCSHMAC.Endpoint != "" {
+			opts = append(opts, s3.WithEndpoint(cfg.GCSHMAC.Endpoint))
+		}
+		return s3.NewGCSHMAC(cfg.GCSHMAC.AccessKeyID, cfg.GCSHMAC.SecretKey, cfg.GCSHMAC.Bucket, serviceTag, 0, logger, opts...)
 	default:
 		return nil, errors.New("unknown storage provider")
 	}
