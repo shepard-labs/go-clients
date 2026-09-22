@@ -1,5 +1,5 @@
 // Package storage defines a provider-agnostic interface for blob/object
-// storage, plus its subpackage implementations (gcs, r2, s3).
+// storage, plus its subpackage implementations (gcs, r2, s3, local).
 //
 // Providers:
 //
@@ -8,6 +8,7 @@
 // | gcs     | Google Cloud Storage (native) | Service-account client via cloud.google.com/go |
 // | r2      | Cloudflare R2                 | Thin wrapper over the s3 core                  |
 // | s3      | S3-compatible core            | AWS S3, MinIO, Backblaze B2, Wasabi, GCS-HMAC  |
+// | local   | Local filesystem              | Bytes only: Stat ContentType empty; serviceTag logged, not persisted |
 //
 // Two paths to GCS: use the native gcs package when service-account (ADC)
 // auth is available; use s3.NewGCSHMAC when only HMAC interoperability keys
