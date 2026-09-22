@@ -16,7 +16,7 @@ SDKs into its build graph.
 | Module | Import path | Providers |
 |---|---|---|
 | `email` | `github.com/shepard-labs/go-clients/email` | SES (`/ses`), Postmark (`/postmark`) |
-| `storage` | `github.com/shepard-labs/go-clients/storage` | GCS (`/gcs`), Cloudflare R2 (`/r2`) |
+| `storage` | `github.com/shepard-labs/go-clients/storage` | GCS (`/gcs`), Cloudflare R2 (`/r2`), S3-compatible (`/s3`: AWS S3, MinIO, Backblaze B2, Wasabi, GCS-HMAC) |
 | `kms` | `github.com/shepard-labs/go-clients/kms` | Google Cloud KMS |
 | `twitter` | `github.com/shepard-labs/go-clients/twitter` | X (Twitter) API v2 |
 | `search` | `github.com/shepard-labs/go-clients/search` | Firecrawl (`/firecrawl`), Exa (`/exa`), Crawl4AI (`/crawl4ai`) |
