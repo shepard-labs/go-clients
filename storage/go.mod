@@ -6,7 +6,7 @@ require (
 	cloud.google.com/go/storage v1.70.0
 	github.com/minio/minio-go/v7 v7.4.1
 	go.uber.org/zap v1.28.0
-	google.golang.org/api v0.307.0
+	google.golang.org/api v0.310.0
 )
 
 require (
@@ -31,7 +31,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/s2a-go v0.1.11 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/googleapis/enterprise-certificate-proxy v0.3.23 // indirect
+	github.com/googleapis/enterprise-certificate-proxy v0.3.24 // indirect
 	github.com/googleapis/gax-go/v2 v2.27.0 // indirect
 	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
