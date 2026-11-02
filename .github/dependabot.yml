@@ -12,10 +12,6 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 10
-    assignees:
-      - "divydeep"
-    reviewers:
-      - "divydeep"
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -30,10 +26,6 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
-    assignees:
-      - "divydeep"
-    reviewers:
-      - "divydeep"
     commit-message:
       prefix: "chore(deps)"
     groups:
