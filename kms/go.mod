@@ -6,7 +6,7 @@ require (
 	cloud.google.com/go/kms v1.37.0
 	github.com/googleapis/gax-go/v2 v2.27.0
 	go.uber.org/zap v1.28.0
-	google.golang.org/api v0.315.0
+	google.golang.org/api v0.316.0
 	google.golang.org/protobuf v1.36.12
 )
 
